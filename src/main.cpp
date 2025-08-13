@@ -23,9 +23,7 @@ Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 using namespace ControlTableItem;
 
 constexpr float DEG_PER_TICK = 360.0f / 4096.0f;
-static inline float snapNearestDeg(float deg) {
-  return roundf(deg / DEG_PER_TICK) * DEG_PER_TICK;
-}
+constexpr float TICK_PER_DEG = 4096.0f / 360.0f;
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
@@ -39,18 +37,33 @@ void setup() {
 
   dxl.torqueOff(DXL_ID);
   dxl.setOperatingMode(DXL_ID, OP_POSITION);
-  dxl.writeControlTableItem(DRIVE_MODE,    DXL_ID, 1);
+  dxl.writeControlTableItem(DRIVE_MODE,    DXL_ID, 1);  // Drive mode reverse bei 1 bedeutet cw ist + und ccw ist -
   dxl.writeControlTableItem(HOMING_OFFSET, DXL_ID, 0); // kein Offset
+  dxl.writeControlTableItem(PROFILE_VELOCITY,DXL_ID, 40);
+  dxl.writeControlTableItem(PROFILE_ACCELERATION, DXL_ID, 15);
   dxl.writeControlTableItem(CURRENT_LIMIT, DXL_ID, 100);
   dxl.torqueOn(DXL_ID);
+  
 }
 
-bool reachedGoal(uint8_t dxl_id, float target_deg, float err_deg = 0.09f, uint32_t timeout = 8000){
+float getRealPosition(){
+  return dxl.getPresentPosition(DXL_ID, UNIT_RAW) * DEG_PER_TICK;
+}
+
+bool reachedGoal(uint8_t dxl_id, float target_deg, float err_deg, uint32_t timeout){
   elapsedMillis polling;
   elapsedMillis t;
+  int cur_counter = 0;
   while(t < timeout){
-    if(polling >= 10){
-      float cur_pos = dxl.getPresentPosition(dxl_id, UNIT_DEGREE);
+    if(polling >= 5){
+      float cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
+      float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
+      if(fabsf(cur_cur) > 30){
+        dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
+        DEBUG_SERIAL.println(dxl.getPresentPosition(dxl_id, UNIT_RAW));
+        return false;
+      }
+      //DEBUG_SERIAL.println(dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE));
       if (fabsf(cur_pos - target_deg) <= err_deg) {
         return true;
       }
@@ -60,17 +73,28 @@ bool reachedGoal(uint8_t dxl_id, float target_deg, float err_deg = 0.09f, uint32
   return false;
 }
   
-
 void sim_movement(){
-  static const float sim_target [] = {0, 330, 165, 190, 215, 240, 265, 290, 165, 140, 115, 90, 65, 40, 0};
-    for (float deg : sim_target) {
-      float cmd = snapNearestDeg(deg);                             // nächster darstellbarer Winkel
-      dxl.setGoalPosition(DXL_ID, cmd, UNIT_DEGREE);
-      reachedGoal(DXL_ID, cmd, 0.09f, 3000);   
-      DEBUG_SERIAL.print("Sollwert: ");
-      DEBUG_SERIAL.print(deg);
-      DEBUG_SERIAL.print("----Istwert: ");
-      DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_DEGREE), 3);
+  float sim_deg [] = {0, 330, 0, 165, 0, 330, 0};
+  int32_t sim_tick[sizeof(sim_deg)/sizeof(sim_deg[0])];
+  int32_t roundTick;
+  for(int i = 0; i<sizeof(sim_deg)/sizeof(sim_deg[0]); i++){
+    roundTick = (int32_t)lroundf(sim_deg[i] * TICK_PER_DEG);
+    if(roundTick < 0){
+      roundTick = 0;
+    }
+    else if(roundTick > 4095){
+      roundTick = 4095;
+    }
+    sim_tick[i] = roundTick;
+  }
+  for (int32_t tick : sim_tick) {                            // nächster darstellbarer Winkel
+    dxl.setGoalPosition(DXL_ID, tick, UNIT_RAW);
+    if(reachedGoal(DXL_ID, tick, 0.15f, 30000) == false) {break;}
+    DEBUG_SERIAL.print("Sollwert: ");
+    DEBUG_SERIAL.print(tick*DEG_PER_TICK, 3);
+    DEBUG_SERIAL.print("----Istwert: ");
+    float cur_deg = getRealPosition();
+    DEBUG_SERIAL.println(cur_deg, 3);
   }
   dxl.ledOff(DXL_ID);
 }
@@ -78,6 +102,7 @@ void sim_movement(){
 void loop() {
   but1Press = digitalRead(BUT1);
   if(but1Up == HIGH && but1Press == LOW && but1Millis > buttonTimer) {
+    DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
     sim_movement();
     but1Millis = 0;
   }
