@@ -3,14 +3,12 @@
 #include <math.h>
 #include <elapsedMillis.h>
 
-// ===== Hardware (MKR Zero + DYNAMIXEL MKR Shield) =====
 #define DXL_SERIAL   Serial1
 #define DEBUG_SERIAL Serial
 const int DXL_DIR_PIN = A6;
 const int BUT1 = 6, BUT2 = 7;
 
-// ===== DYNAMIXEL setup =====
-const uint8_t  DXL_ID = 1;             // <-- deine Servo-ID
+const uint8_t  DXL_ID = 1;
 const float    DXL_PROTOCOL = 2.0;
 const uint32_t DXL_BAUD = 1000000;
 elapsedMillis but1Millis;
@@ -18,6 +16,14 @@ unsigned long buttonTimer = 150;
 bool but1Up, but2Up;
 bool but1Press, but2Press;
 float cur_pos;
+float tarVolt = 0.0;
+float totalAngle = 0.0;
+float d11;
+float d12;
+float d21;
+float d22;
+float d31;
+float d32;
 
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 using namespace ControlTableItem;
@@ -43,7 +49,6 @@ void setup() {
   dxl.writeControlTableItem(PROFILE_ACCELERATION, DXL_ID, 40);
 
   dxl.torqueOn(DXL_ID);
-  
 }
 
 float getRealDegPosition(){
@@ -57,7 +62,7 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 5 ,uint
     if(polling >= 5){
       int32_t cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
       float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
-      if(fabsf(cur_cur) > 900){
+      if(fabsf(cur_cur) > 61){
         DEBUG_SERIAL.print("Before Hold: ");
         DEBUG_SERIAL.println(dxl.getPresentPosition(dxl_id, UNIT_RAW));
         dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
@@ -90,10 +95,23 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 5 ,uint
   
 void sim_movement(){
   dxl.ledOn(DXL_ID);
-  float sim_deg [] = {0, 330, 165, 190, 215, 240, 265, 290, 140, 115, 90, 65, 40, 0};
+
+  dxl.setGoalPosition(DXL_ID, 0, UNIT_RAW);
+  reachedGoal(DXL_ID, 0);
+  dxl.setGoalPosition(DXL_ID, 4095, UNIT_RAW);
+  if(reachedGoal(DXL_ID, 4095) == false){
+    totalAngle = getRealDegPosition();
+  }
+  
+  float posMidSteps = 25;
+  float negMidSteps = 25;
+  float absMid = totalAngle / 2;
+  float sim_deg [] = {0, totalAngle, absMid,
+     d21, absMid-2*negMidSteps, absMid-3*negMidSteps, absMid-4*negMidSteps, d12,
+      d22, absMid+2*posMidSteps, absMid+3*posMidSteps, absMid+4*posMidSteps, d31, 0};
   int32_t sim_tick[sizeof(sim_deg)/sizeof(sim_deg[0])];
   int32_t roundTick;
-  for(int32_t i = 0; i<sizeof(sim_deg)/sizeof(sim_deg[0]); i++){
+  for(size_t i = 0; i<sizeof(sim_deg)/sizeof(sim_deg[0]); i++){
     roundTick = (int32_t)lroundf(sim_deg[i] * TICK_PER_DEG);
     if(roundTick < 0){
       roundTick = 0;
@@ -103,7 +121,8 @@ void sim_movement(){
     }
     sim_tick[i] = roundTick;
   }
-  for (int32_t tick : sim_tick) {                            // nächster darstellbarer Winkel
+  for (int32_t tick : sim_tick) {
+    DEBUG_SERIAL.print(tick);
     dxl.setGoalPosition(DXL_ID, tick, UNIT_RAW);
     if(reachedGoal(DXL_ID, tick) == false) {
       DEBUG_SERIAL.print("End Hold: ");
@@ -120,13 +139,30 @@ void sim_movement(){
 }
 
 void loop() {
-  but1Press = digitalRead(BUT1);
-  if(but1Up == HIGH && but1Press == LOW && but1Millis > buttonTimer) {
-    DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
-    sim_movement();
-    DEBUG_SERIAL.print("End Hold: ");
-      DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
-    but1Millis = 0;
+  if(Serial.available()){
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    bool cancelled = false;
+
+    if(command.startsWith("SETV:")){tarVolt = command.substring(5).toFloat();}
+    if(command.startsWith("SETW:")){totalAngle = command.substring(5).toFloat();}
+    if(command.startsWith("dead11:")){d11 = command.substring(5).toFloat();}
+    if(command.startsWith("dead12:")){d12 = command.substring(5).toFloat();}
+    if(command.startsWith("dead21:")){d21 = command.substring(5).toFloat();}
+    if(command.startsWith("dead22:")){d22 = command.substring(5).toFloat();}
+    if(command.startsWith("dead31:")){d31 = command.substring(5).toFloat();}
+    if(command.startsWith("dead32:")){d32 = command.substring(5).toFloat();}
+
+    else if(command == "GO"){
+      //but1Press = digitalRead(BUT1);
+      //if(but1Up == HIGH && but1Press == LOW && but1Millis > buttonTimer) {
+        DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
+        sim_movement();
+        DEBUG_SERIAL.print("End Hold: ");
+          DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
+      //  but1Millis = 0;
+      //}
+      //but1Up = but1Press;
+    }
   }
-  but1Up = but1Press;
 }

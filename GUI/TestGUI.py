@@ -7,7 +7,7 @@ calc_win = None
 
 # --------------- SERIAL MIT SERVO
 
-def write_serial(gesamtV, gesamtW, stop_event, on_finish):
+def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_finish):
     try:
         ser = serial.Serial('COM3', 115200, timeout=2)
         daten = []
@@ -15,6 +15,18 @@ def write_serial(gesamtV, gesamtW, stop_event, on_finish):
         ser.write(f"SETV:{gesamtV}\n".encode())
         time.sleep(0.2)
         ser.write(f"SETW:{gesamtW}\n".encode())
+        time.sleep(0.2)
+        ser.write(f"D11:{d11}\n".encode())
+        time.sleep(0.2)
+        ser.write(f"D12:{d12}\n".encode())
+        time.sleep(0.2)
+        ser.write(f"D21:{d21}\n".encode())
+        time.sleep(0.2)
+        ser.write(f"D22:{d22}\n".encode())
+        time.sleep(0.2)
+        ser.write(f"D31:{d31}\n".encode())
+        time.sleep(0.2)
+        ser.write(f"D32:{d32}\n".encode())
         time.sleep(0.2)
         print("Sende: GO") #debug
         ser.write(b"GO\n")
@@ -96,6 +108,8 @@ def open_calc_win():
         txtDead12 = float(txt3.get().strip().replace(',', '.'))
         txtDead21 = float(txt4.get().strip().replace(',', '.'))
         txtDead22 = float(txt5.get().strip().replace(',', '.'))
+        txtDead31 = float(txt7.get().strip().replace(',', '.'))
+        txtDead32 = float(txt8.get().strip().replace(',', '.'))
         
     except ValueError:
         error_win = tk.Toplevel(root)
@@ -128,7 +142,9 @@ def open_calc_win():
         stop_event.set()
         wait_win.destroy()
     wait_win.protocol("WM_DELETE_WINDOW", cancel_close)
-    threading.Thread(target=write_serial, args=(txtSoll, txtWinkel, stop_event, close_wait_results), daemon=True).start()
+    threading.Thread(target=write_serial, args=(txtSoll, txtWinkel, txtDead11, txtDead12,
+                                                 txtDead21, txtDead22, txtDead31, txtDead32,
+                                                   stop_event, close_wait_results), daemon=True).start()
 
 # --------------- GUI
 
@@ -172,8 +188,16 @@ ttk.Label(main_frame, text="Ende Deadzone 2:").grid(row=4, column=1, sticky="w",
 txt5 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt5.grid(row=5, column=1, pady=(0, 10))
 
-ttk.Button(main_frame, text="OK", command=close_window).grid(row=6, column=1, pady=(0, 5), ipadx=20)
-ttk.Button(main_frame, text="Calc", command=open_calc_win).grid(row=7, column=1, pady=5, ipadx=10)
+ttk.Label(main_frame, text="Anfang Deadzone 3:").grid(row=6, column=0, sticky="w", pady=(0, 2))
+txt7 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
+txt7.grid(row=7, column=0, pady=(0, 10))
+
+ttk.Label(main_frame, text="Ende Deadzone 3:").grid(row=6, column=1, sticky="w", pady=(0, 2),ipadx=20)
+txt8 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
+txt8.grid(row=7, column=1, pady=(0, 10))
+
+ttk.Button(main_frame, text="OK", command=close_window).grid(row=10, column=0, pady=(0, 5), ipadx=20)
+ttk.Button(main_frame, text="Calc", command=open_calc_win).grid(row=10, column=1, pady=5, ipadx=10)
 
 txt1.bind("<Return>", lambda event: open_calc_win())
 txt2.bind("<Return>", lambda event: open_calc_win())
