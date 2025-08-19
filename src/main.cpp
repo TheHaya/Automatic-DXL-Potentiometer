@@ -39,32 +39,46 @@ void setup() {
   dxl.setOperatingMode(DXL_ID, OP_POSITION);
   dxl.writeControlTableItem(DRIVE_MODE,    DXL_ID, 1);  // Drive mode reverse bei 1 bedeutet cw ist + und ccw ist -
   dxl.writeControlTableItem(HOMING_OFFSET, DXL_ID, 0); // kein Offset
-  dxl.writeControlTableItem(PROFILE_VELOCITY,DXL_ID, 40);
-  dxl.writeControlTableItem(PROFILE_ACCELERATION, DXL_ID, 15);
-  dxl.writeControlTableItem(CURRENT_LIMIT, DXL_ID, 100);
+  dxl.writeControlTableItem(PROFILE_VELOCITY,DXL_ID, 100);
+  dxl.writeControlTableItem(PROFILE_ACCELERATION, DXL_ID, 40);
+
   dxl.torqueOn(DXL_ID);
   
 }
 
-float getRealPosition(){
+float getRealDegPosition(){
   return dxl.getPresentPosition(DXL_ID, UNIT_RAW) * DEG_PER_TICK;
 }
 
-bool reachedGoal(uint8_t dxl_id, float target_deg, float err_deg, uint32_t timeout){
+bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 5 ,uint32_t timeout = 10000){
   elapsedMillis polling;
   elapsedMillis t;
-  int cur_counter = 0;
   while(t < timeout){
     if(polling >= 5){
-      float cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
+      int32_t cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
       float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
-      if(fabsf(cur_cur) > 30){
+      if(fabsf(cur_cur) > 900){
+        DEBUG_SERIAL.print("Before Hold: ");
+        DEBUG_SERIAL.println(dxl.getPresentPosition(dxl_id, UNIT_RAW));
         dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
+        DEBUG_SERIAL.print("After Hold: ");
         DEBUG_SERIAL.println(dxl.getPresentPosition(dxl_id, UNIT_RAW));
         return false;
       }
       //DEBUG_SERIAL.println(dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE));
-      if (fabsf(cur_pos - target_deg) <= err_deg) {
+      if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick < 0) {
+        for(int i = 0; i<5 ; i++){
+          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) + 1, UNIT_RAW);
+        } 
+        return true;
+      }
+      else if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick > 0) {
+        for(int i = 0; i<5 ; i++){
+          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) - 1, UNIT_RAW);
+        } 
+        return true;
+      }
+      else if (cur_pos == target_tick){
         return true;
       }
       polling = 0;
@@ -73,11 +87,13 @@ bool reachedGoal(uint8_t dxl_id, float target_deg, float err_deg, uint32_t timeo
   return false;
 }
   
+  
 void sim_movement(){
-  float sim_deg [] = {0, 330, 0, 165, 0, 330, 0};
+  dxl.ledOn(DXL_ID);
+  float sim_deg [] = {0, 330, 165, 190, 215, 240, 265, 290, 140, 115, 90, 65, 40, 0};
   int32_t sim_tick[sizeof(sim_deg)/sizeof(sim_deg[0])];
   int32_t roundTick;
-  for(int i = 0; i<sizeof(sim_deg)/sizeof(sim_deg[0]); i++){
+  for(int32_t i = 0; i<sizeof(sim_deg)/sizeof(sim_deg[0]); i++){
     roundTick = (int32_t)lroundf(sim_deg[i] * TICK_PER_DEG);
     if(roundTick < 0){
       roundTick = 0;
@@ -89,11 +105,15 @@ void sim_movement(){
   }
   for (int32_t tick : sim_tick) {                            // nächster darstellbarer Winkel
     dxl.setGoalPosition(DXL_ID, tick, UNIT_RAW);
-    if(reachedGoal(DXL_ID, tick, 0.15f, 30000) == false) {break;}
+    if(reachedGoal(DXL_ID, tick) == false) {
+      DEBUG_SERIAL.print("End Hold: ");
+      DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
+      break;
+    }
     DEBUG_SERIAL.print("Sollwert: ");
     DEBUG_SERIAL.print(tick*DEG_PER_TICK, 3);
     DEBUG_SERIAL.print("----Istwert: ");
-    float cur_deg = getRealPosition();
+    float cur_deg = getRealDegPosition();
     DEBUG_SERIAL.println(cur_deg, 3);
   }
   dxl.ledOff(DXL_ID);
@@ -104,6 +124,8 @@ void loop() {
   if(but1Up == HIGH && but1Press == LOW && but1Millis > buttonTimer) {
     DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
     sim_movement();
+    DEBUG_SERIAL.print("End Hold: ");
+      DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
     but1Millis = 0;
   }
   but1Up = but1Press;
