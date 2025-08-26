@@ -16,19 +16,20 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
         time.sleep(0.2)
         ser.write(f"SETW:{gesamtW}\n".encode())
         time.sleep(0.2)
-        ser.write(f"D11:{d11}\n".encode())
+        ser.write(f"dead11:{d11}\n".encode())
         time.sleep(0.2)
-        ser.write(f"D12:{d12}\n".encode())
+        ser.write(f"dead12:{d12}\n".encode())
         time.sleep(0.2)
-        ser.write(f"D21:{d21}\n".encode())
+        ser.write(f"dead21:{d21}\n".encode())
         time.sleep(0.2)
-        ser.write(f"D22:{d22}\n".encode())
+        ser.write(f"dead22:{d22}\n".encode())
         time.sleep(0.2)
-        ser.write(f"D31:{d31}\n".encode())
+        ser.write(f"dead31:{d31}\n".encode())
         time.sleep(0.2)
-        ser.write(f"D32:{d32}\n".encode())
+        ser.write(f"dead32:{d32}\n".encode())
         time.sleep(0.2)
         print("Sende: GO") #debug
+        #print(d11, d12, d21, d22, d31, d32)
         ser.write(b"GO\n")
 
         while True:
@@ -47,11 +48,10 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                     parts = line.split(";")
                     sollwinkel = float(parts[0].split(":")[1])
                     sollspannung = float(parts[1].split(":")[1])
-                    winkel = float(parts[2].split(":")[1])
-                    spannung = float(parts[3].split(":")[1])
-                    fehler_abs = float(parts[4].split(":")[1])
-                    fehler_rel = float(parts[5].split(":")[1])
-                    daten.append([sollwinkel, sollspannung, winkel, spannung, fehler_abs, fehler_rel])
+                    istspannung = float(parts[2].split(":")[1])
+                    istwinkel = float(parts[3].split(":")[1])
+                    
+                    daten.append([sollwinkel, sollspannung, istspannung, istwinkel])
                 except Exception as e:
                     print("Fehler beim Parsen:", e) #debug
                     continue
@@ -61,15 +61,14 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
         if not stop_event.is_set():
             with open("Results.csv", "w", newline="") as file:
                 writer = csv.writer(file, delimiter=';')
-                writer.writerow(["Soll-Winkel", "Soll-Spannung", "Winkel", "Spannung", "Fehler-Absolut", "Fehler-Relativ"])
-                for sollwinkel, sollspannung, winkel, spannung, fehler_abs, fehler_rel in daten:
+                writer.writerow(["Soll-Winkel", "Soll-Spannung", "Ist-Spannung", "Ist-Winkel"])
+                for sollwinkel, sollspannung, istspannung, istwinkel in daten:
                     writer.writerow([
-                        f"{sollwinkel:.1f}".replace('.', ','), 
+                        f"{sollwinkel:.2f}".replace('.', ','), 
                         f"{sollspannung:.5f}".replace('.', ','),
-                        f"{winkel:.1f}".replace('.', ','), 
-                        f"{spannung:.5f}".replace('.', ','),
-                        f"{fehler_abs:.5f}".replace('.', ','),
-                        f"{fehler_rel:.1f}".replace('.', ',')]) 
+                        f"{istspannung:.5f}".replace('.', ','), 
+                        f"{istwinkel:.2f}".replace('.', ',')
+                        ]) 
     except Exception as e:
         print("Fehler bei Serial: ", e) #debug
 
@@ -202,6 +201,11 @@ ttk.Button(main_frame, text="Calc", command=open_calc_win).grid(row=10, column=1
 txt1.bind("<Return>", lambda event: open_calc_win())
 txt2.bind("<Return>", lambda event: open_calc_win())
 txt3.bind("<Return>", lambda event: open_calc_win())
+txt4.bind("<Return>", lambda event: open_calc_win())
+txt5.bind("<Return>", lambda event: open_calc_win())
+txt6.bind("<Return>", lambda event: open_calc_win())
+txt7.bind("<Return>", lambda event: open_calc_win())
+txt8.bind("<Return>", lambda event: open_calc_win())
 root.bind("<Escape>", lambda event: close_window())
 
 sv_ttk.set_theme("dark")
