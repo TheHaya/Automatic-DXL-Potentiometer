@@ -1,11 +1,28 @@
 import tkinter as tk
 from tkinter import ttk
 import sv_ttk
-import csv, serial, time, threading
+import serial, time, threading
+from itertools import cycle
+import pandas as pd
 
 calc_win = None
 
 # --------------- SERIAL MIT SERVO
+
+labels = [  "Mittelposition",
+            "Start aktiver Bereich CW (Drehrichtung-)",
+            "50° CW (25% aktiver Bereich)(Drehrichtung-)",
+            "75° CW (50% aktiver Bereich)(Drehrichtung-)",
+            "100° CW (75% aktiver Bereich)(Drehrichtung-)",
+            "Ende aktiver Bereich CW (Drehrichtung-)(11) 10V",
+            "Mechanisches Ende CW (Drehrichtung-)",
+            "Start aktiver Bereich CCW (Drehrichtung+)",
+            "50° CCW (25% aktiver Bereich)(Drehrichtung+)",
+            "75° CCW (50% aktiver Bereich)(Drehrichtung+)",
+            "100° CCW (75% aktiver Bereich)(Drehrichtung+)",
+            "Ende aktiver Bereich CCW (Drehrichtung+)(13) 0V",
+            "Mechanisches Ende CCW (Drehrichtung+)"]
+labels_iter = cycle(labels)
 
 def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_finish):
     try:
@@ -50,8 +67,8 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                     sollspannung = float(parts[1].split(":")[1])
                     istspannung = float(parts[2].split(":")[1])
                     istwinkel = float(parts[3].split(":")[1])
-                    
-                    daten.append([sollwinkel, sollspannung, istspannung, istwinkel])
+                    linear = float(parts[4].split(":")[1])
+                    daten.append([sollwinkel, sollspannung, istspannung, istwinkel, linear])
                 except Exception as e:
                     print("Fehler beim Parsen:", e) #debug
                     continue
@@ -59,16 +76,37 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
         ser.close()
 
         if not stop_event.is_set():
-            with open("Results.csv", "w", newline="") as file:
-                writer = csv.writer(file, delimiter=';')
-                writer.writerow(["Soll-Winkel", "Soll-Spannung", "Ist-Spannung", "Ist-Winkel"])
-                for sollwinkel, sollspannung, istspannung, istwinkel in daten:
-                    writer.writerow([
-                        f"{sollwinkel:.2f}".replace('.', ','), 
-                        f"{sollspannung:.5f}".replace('.', ','),
-                        f"{istspannung:.5f}".replace('.', ','), 
-                        f"{istwinkel:.2f}".replace('.', ',')
-                        ]) 
+            rows = []
+            for(sollwinkel, sollspannung, istspannung, istwinkel, linear), label in zip(daten, labels_iter):
+                rows.append({
+                    " ": label,
+                    "Soll-Winkel [°]": round(sollwinkel, 1),
+                    "Soll-Spannung [V]": round(sollspannung, 2),
+                    "Ist-Spannung [V]": round(istspannung, 3),
+                    "Ist-Winkel [°]": round(istwinkel, 1),
+                    "Linearität":  float(linear)
+                })
+            df = pd.DataFrame(rows)
+
+            with pd.ExcelWriter("Alwin-RMTest-"+txt9.get()+".xlsx", engine="xlsxwriter") as writer:
+                sheet = "Messung"
+                df.to_excel(writer, index=False, sheet_name=sheet)
+                wb = writer.book
+                ws = writer.sheets[sheet]
+
+                format_percent = wb.add_format({'num_format': '0,00%'})
+                format_degree = wb.add_format({'num_format': '0,0°'})
+                format_volt2 = wb.add_format({'num_format': '0,00'})
+                format_volt3 = wb.add_format({'num_format': '0,000'})
+
+                ws.set_column('A:A', 44)
+                ws.set_column('B:B', 20, format_degree)
+                ws.set_column('C:C', 20, format_volt2)
+                ws.set_column('C:D', 20, format_volt3)
+                ws.set_column('E:E', 20, format_degree)
+                ws.set_column('F:F', 20, format_percent)
+
+                ws.freeze_panes(1,0)
     except Exception as e:
         print("Fehler bei Serial: ", e) #debug
 
@@ -202,6 +240,11 @@ ttk.Label(main_frame, text="Ende Deadzone 3:").grid(row=6, column=1, sticky="w",
 txt8 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt8.grid(row=7, column=1, pady=(0, 10))
 txt8.insert(0, "330")
+
+ttk.Label(main_frame, text="Name Teil:").grid(row=8, column=0, sticky="w", pady=(0, 2),ipadx=20)
+txt9 = ttk.Entry(main_frame, width=20)
+txt9.grid(row=9, column=0, pady=(0, 10))
+txt9.insert(0, "T107357")
 
 ttk.Button(main_frame, text="OK", command=close_window).grid(row=10, column=0, pady=(0, 5), ipadx=20)
 ttk.Button(main_frame, text="Calc", command=open_calc_win).grid(row=10, column=1, pady=5, ipadx=10)

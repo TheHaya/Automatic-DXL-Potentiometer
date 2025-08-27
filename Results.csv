@@ -1,15 +1,14 @@
-Soll-Winkel;Soll-Spannung;Ist-Spannung;Ist-Winkel
-0,00;0,00000;0,00000;0,00
-330,03;0,00000;37,00000;329,94
-164,97;0,00000;18,00000;164,97
-140,01;0,00000;15,00000;140,01
-114,96;0,00000;13,00000;114,96
-90,00;0,00000;10,00000;90,00
-65,04;0,00000;7,00000;65,04
-39,99;0,00000;4,00000;40,08
-190,02;0,00000;21,00000;190,02
-214,98;0,00000;24,00000;214,98
-240,03;0,00000;27,00000;240,03
-264,99;0,00000;30,00000;264,90
-290,04;0,00000;33,00000;289,95
-0,00;0,00000;0,00000;0,09
+;Soll-Winkel;Soll-Spannung;Ist-Spannung;Ist-Winkel;Linearität
+Mittelposition;0,0;5,00;3,000;-0,0;-20,00%
+Start aktiver Bereich CW (Drehrichtung-);25,0;5,00;4,000;24,4;-10,00%
+50° CW (25% aktiver Bereich)(Drehrichtung-);50,0;6,25;4,000;49,4;-22,00%
+75° CW (50% aktiver Bereich)(Drehrichtung-);75,0;7,50;5,000;74,4;-25,00%
+100° CW (75% aktiver Bereich)(Drehrichtung-);100,0;8,75;6,000;99,4;-27,00%
+Ende aktiver Bereich CW (Drehrichtung-)(11) 10V;125,0;10,00;6,000;124,4;-40,00%
+Mechanisches Ende CW (Drehrichtung-);165,6;10,00;7,000;165,6;-30,00%
+Start aktiver Bereich CCW (Drehrichtung+);-25,0;5,00;3,000;-25,6;-20,00%
+50° CCW (25% aktiver Bereich)(Drehrichtung+);-50,0;3,75;2,000;-50,7;-17,00%
+75° CCW (50% aktiver Bereich)(Drehrichtung+);-75,0;2,50;2,000;-75,6;-5,00%
+100° CCW (75% aktiver Bereich)(Drehrichtung+);-100,0;1,25;1,000;-100,6;-3,00%
+Ende aktiver Bereich CCW (Drehrichtung+)(13) 0V;-125,0;0,00;0,000;-125,6;0,00%
+Mechanisches Ende CCW (Drehrichtung+);-165,6;0,00;0,000;-165,6;0,00%

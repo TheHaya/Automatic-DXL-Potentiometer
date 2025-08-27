@@ -13,12 +13,14 @@ const float    DXL_PROTOCOL = 2.0;
 const uint32_t DXL_BAUD = 1000000;
 elapsedMillis but1Millis;
 unsigned long buttonTimer = 150;
+float maxcurrent = 0;
 bool but1Up, but2Up;
 bool but1Press, but2Press;
 bool cancelled;
 float cur_pos;
 float tarVolt = 0.0;
-float totalAngle = 0.0;
+float realAngleTotal = 0.0;
+float sollAngleTotal = 0.0;
 float d11;
 float d12;
 float d21;
@@ -38,7 +40,6 @@ void setup() {
   pinMode(BUT2, INPUT);
   Serial.begin(115200);
 
-  // Bus starten
   dxl.begin(DXL_BAUD);
   dxl.setPortProtocolVersion(DXL_PROTOCOL);
 
@@ -46,24 +47,37 @@ void setup() {
   dxl.setOperatingMode(DXL_ID, OP_POSITION);
   dxl.writeControlTableItem(DRIVE_MODE,    DXL_ID, 1);  // Drive mode reverse bei 1 bedeutet cw ist + und ccw ist -
   dxl.writeControlTableItem(HOMING_OFFSET, DXL_ID, 0); // kein Offset
-  dxl.writeControlTableItem(PROFILE_VELOCITY,DXL_ID, 100);
-  dxl.writeControlTableItem(PROFILE_ACCELERATION, DXL_ID, 40);
+  dxl.writeControlTableItem(PROFILE_VELOCITY,DXL_ID, 40);
+  dxl.writeControlTableItem(PROFILE_ACCELERATION, DXL_ID, 15);
 
   dxl.torqueOn(DXL_ID);
+}
+
+float lerpDead(int32_t x, int32_t d1, int32_t d2){
+  if(d1 == d2){
+    return 0;
+  } else {
+    return (float)(x - d1) / (float)(d2 - d1);
+  }
 }
 
 float getRealDegPosition(){
   return dxl.getPresentPosition(DXL_ID, UNIT_RAW) * DEG_PER_TICK;
 }
 
+int32_t DegToTick(float degPos){
+  return (int32_t)lroundf(degPos * TICK_PER_DEG);
+}
+
 bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint32_t timeout = 8000){
   elapsedMillis polling;
   elapsedMillis t;
   while(t < timeout){
-    if(polling >= 5){
+    if(polling >= 1000){
       int32_t cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
       float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
-      if(fabsf(cur_cur) > 62){
+      if(fabsf(cur_cur) > 27){
+        realAngleTotal = getRealDegPosition();
         //DEBUG_SERIAL.print("Before Hold: ");
         //DEBUG_SERIAL.println(dxl.getPresentPosition(dxl_id, UNIT_RAW));
         dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
@@ -72,6 +86,10 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint
         return false;
       }
       //DEBUG_SERIAL.println(dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE));
+      if(maxcurrent < dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE)){
+        maxcurrent = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
+      }
+      
       if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick < 0) {
         for(int i = 0; i<5 ; i++){
           dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) + 1, UNIT_RAW);
@@ -92,25 +110,59 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint
   } 
   return false;
 }
-  
+
+float deadSollVolt(int32_t tick, float tarVolt, 
+                  float totalAngle, float d12, 
+                  float d21, float d22, float d31){
+
+  const int32_t d12Tick = DegToTick(d12);
+  const int32_t d21Tick = DegToTick(d21);
+  const int32_t d22Tick = DegToTick(d22);
+  const int32_t d31Tick = DegToTick(d31);
+  const float halfVolt = tarVolt / 2;
+
+  if(tick <= d12Tick){return 0;}
+  if(tick <= d21Tick){
+    float alive1 = lerpDead(tick, d12Tick, d21Tick);
+    return halfVolt * alive1;
+  }
+  if(tick <= d22Tick){return halfVolt;}
+  if(tick <= d31Tick){
+    float alive2 = lerpDead(tick, d22Tick, d31Tick);
+    return halfVolt + halfVolt * alive2;
+  }
+  return tarVolt;
+}
+
 void sim_movement(){
   cancelled = false;
   dxl.ledOn(DXL_ID);
   dxl.setGoalPosition(DXL_ID, 0, UNIT_RAW);
   reachedGoal(DXL_ID, 0);
   dxl.setGoalPosition(DXL_ID, 4095, UNIT_RAW);
-  if(reachedGoal(DXL_ID, 4095) == false){
-    totalAngle = getRealDegPosition();
-  }
-  
+  reachedGoal(DXL_ID, 4095);
+  dxl.setGoalPosition(DXL_ID, 0, UNIT_RAW);
+  reachedGoal(DXL_ID, 0);
+  for(int i = 0; i < 5; i++){ // UNBEDINGT FIXEN
+    dxl.ledOff(1);
+    delay(150);
+     dxl.ledOn(1);
+    delay(150);
+  } 
+
+  realAngleTotal = 331.2; // DAS AUCH
+  sollAngleTotal = 330;// DAS AUCH
   float posMidSteps = 25;
   float negMidSteps = 25;
-  float absMid = totalAngle / 2;
-  float sim_deg [] = {0, totalAngle, absMid,
-     d21, absMid-2*negMidSteps, absMid-3*negMidSteps, absMid-4*negMidSteps, d12,
-      d22, absMid+2*posMidSteps, absMid+3*posMidSteps, absMid+4*posMidSteps, d31, 0};
+  float realMid = realAngleTotal / 2;
+  float sollMid = sollAngleTotal / 2;
+
+  float sim_deg [] = {realMid,
+     d22, d22+negMidSteps, d22+2*negMidSteps, d22+3*negMidSteps, d31, realAngleTotal,
+      d21, d21-posMidSteps, d21-2*posMidSteps, d21-3*posMidSteps, d12, 0};
   int32_t sim_tick[sizeof(sim_deg)/sizeof(sim_deg[0])];
   int32_t roundTick;
+  
   for(size_t i = 0; i<sizeof(sim_deg)/sizeof(sim_deg[0]); i++){    
     roundTick = (int32_t)lroundf(sim_deg[i] * TICK_PER_DEG);
     if(roundTick < 0){
@@ -121,6 +173,7 @@ void sim_movement(){
     }
     sim_tick[i] = roundTick;
   }
+  
   for (int32_t tick : sim_tick) {
     if (Serial.available()) {
       String stopCommand = Serial.readStringUntil('\n');
@@ -136,13 +189,24 @@ void sim_movement(){
     reachedGoal(DXL_ID, tick);
 
     Serial.print("Soll-Winkel:");
-    Serial.print(tick*DEG_PER_TICK);
+    if(tick == DegToTick(realMid)){
+      Serial.print(0);
+    } else if(tick == DegToTick(realAngleTotal) || tick == 0){
+      Serial.print(tick*DEG_PER_TICK-realMid);
+    } else{
+      Serial.print(tick*DEG_PER_TICK-sollMid);
+    }
     Serial.print(";Soll-Spannung:");
-    Serial.print(tarVolt);
+    Serial.print(deadSollVolt(tick, tarVolt, realAngleTotal, 
+                              d12, d21, d22, d31));
+
     Serial.print(";Ist-Spannung:");
-    Serial.print(tick/100);
+    Serial.print(tick/500);
     Serial.print(";Ist-Winkel:");
-    Serial.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW)*DEG_PER_TICK);
+    Serial.print(dxl.getPresentPosition(DXL_ID, UNIT_RAW)*DEG_PER_TICK - realMid);
+    Serial.print(";Linearität:");
+    Serial.println((tick/500 - deadSollVolt(tick, tarVolt, realAngleTotal, 
+                              d12, d21, d22, d31))/tarVolt);
     //DEBUG_SERIAL.print("Sollwert: ");
     //DEBUG_SERIAL.print(tick*DEG_PER_TICK, 3);
     //DEBUG_SERIAL.print("----Istwert: ");
@@ -158,7 +222,7 @@ void loop() {
     command.trim();
 
     if(command.startsWith("SETV:")){tarVolt = command.substring(5).toFloat();}
-    if(command.startsWith("SETW:")){totalAngle = command.substring(5).toFloat();}
+    if(command.startsWith("SETW:")){sollAngleTotal = command.substring(5).toFloat();}
     if(command.startsWith("dead11:")){d11 = command.substring(7).toFloat();}
     if(command.startsWith("dead12:")){d12 = command.substring(7).toFloat();}
     if(command.startsWith("dead21:")){d21 = command.substring(7).toFloat();}
