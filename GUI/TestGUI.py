@@ -165,35 +165,43 @@ vcmd = (root.register(lambda P: (P.count(',') <= 1 and all(ch.isdigit() or ch ==
 ttk.Label(main_frame, text="Sollspannung:").grid(row=0, column=0, sticky="w", pady=(0, 2))
 txt1 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt1.grid(row=1, column=0, pady=(0, 10))
+txt1.insert(0, "10")
 txt1.focus_set()
 
 ttk.Label(main_frame, text="Gesamtwinkel:").grid(row=0, column=1, sticky="w", pady=(0, 2),ipadx=20)
 txt6 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt6.grid(row=1, column=1, pady=(0, 10))
+txt6.insert(0, "330")
 
 ttk.Label(main_frame, text="Anfang Deadzone 1:").grid(row=2, column=0, sticky="w", pady=(0, 2))
 txt2 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt2.grid(row=3, column=0, pady=(0, 10))
+txt2.insert(0, "0")
 
 ttk.Label(main_frame, text="Ende Deadzone 1:").grid(row=2, column=1, sticky="w", pady=(0, 2),ipadx=20)
 txt3 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt3.grid(row=3, column=1, pady=(0, 10))
+txt3.insert(0, "40")
 
 ttk.Label(main_frame, text="Anfang Deadzone 2:").grid(row=4, column=0, sticky="w", pady=(0, 2))
 txt4 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt4.grid(row=5, column=0, pady=(0, 10))
+txt4.insert(0, "140")
 
 ttk.Label(main_frame, text="Ende Deadzone 2:").grid(row=4, column=1, sticky="w", pady=(0, 2),ipadx=20)
 txt5 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt5.grid(row=5, column=1, pady=(0, 10))
+txt5.insert(0, "190")
 
 ttk.Label(main_frame, text="Anfang Deadzone 3:").grid(row=6, column=0, sticky="w", pady=(0, 2))
 txt7 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt7.grid(row=7, column=0, pady=(0, 10))
+txt7.insert(0, "290")
 
 ttk.Label(main_frame, text="Ende Deadzone 3:").grid(row=6, column=1, sticky="w", pady=(0, 2),ipadx=20)
 txt8 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
 txt8.grid(row=7, column=1, pady=(0, 10))
+txt8.insert(0, "330")
 
 ttk.Button(main_frame, text="OK", command=close_window).grid(row=10, column=0, pady=(0, 5), ipadx=20)
 ttk.Button(main_frame, text="Calc", command=open_calc_win).grid(row=10, column=1, pady=5, ipadx=10)
