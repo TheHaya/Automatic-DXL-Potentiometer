@@ -13,6 +13,7 @@ const float    DXL_PROTOCOL = 2.0;
 const uint32_t DXL_BAUD = 1000000;
 elapsedMillis but1Millis;
 unsigned long buttonTimer = 150;
+float startcurrent = 40;
 float maxcurrent = 0;
 bool but1Up, but2Up;
 bool but1Press, but2Press;
@@ -49,7 +50,7 @@ void setup() {
   dxl.writeControlTableItem(HOMING_OFFSET, DXL_ID, 0); // kein Offset
   dxl.writeControlTableItem(PROFILE_VELOCITY,DXL_ID, 40);
   dxl.writeControlTableItem(PROFILE_ACCELERATION, DXL_ID, 15);
-
+  dxl.writeControlTableItem(CURRENT_LIMIT, DXL_ID, 100);
   dxl.torqueOn(DXL_ID);
 }
 
@@ -73,19 +74,47 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint
   elapsedMillis polling;
   elapsedMillis t;
   while(t < timeout){
-    if(polling >= 1000){
+    if(polling >= 1){
       int32_t cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
       float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
-      if(fabsf(cur_cur) > 27){
+      if(fabsf(cur_cur) > maxcurrent+1){
         realAngleTotal = getRealDegPosition();
-        //DEBUG_SERIAL.print("Before Hold: ");
-        //DEBUG_SERIAL.println(dxl.getPresentPosition(dxl_id, UNIT_RAW));
         dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
-        //DEBUG_SERIAL.print("After Hold: ");
-        //DEBUG_SERIAL.println(dxl.getPresentPosition(dxl_id, UNIT_RAW));
         return false;
       }
-      //DEBUG_SERIAL.println(dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE));
+
+      if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick < 0) {
+        for(int i = 0; i<5 ; i++){
+          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) + 1, UNIT_RAW);
+        } 
+        return true;
+      }
+      else if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick > 0) {
+        for(int i = 0; i<5 ; i++){
+          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) - 1, UNIT_RAW);
+        } 
+        return true;
+      }
+      else if (cur_pos == target_tick){
+        return true;
+      }
+      polling = 0;
+    }
+  } 
+  return false;
+}
+
+bool measureMax(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint32_t timeout = 8000){
+  elapsedMillis polling;
+  elapsedMillis t;
+  while(t < timeout){
+    if(polling >= 1){
+      int32_t cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
+      float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
+      if(fabsf(cur_cur) > startcurrent){
+        dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
+        return false;
+      }
       if(maxcurrent < dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE)){
         maxcurrent = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
       }
@@ -110,6 +139,7 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint
   } 
   return false;
 }
+
 
 float deadSollVolt(int32_t tick, float tarVolt, 
                   float totalAngle, float d12, 
@@ -137,6 +167,16 @@ float deadSollVolt(int32_t tick, float tarVolt,
 void sim_movement(){
   cancelled = false;
   dxl.ledOn(DXL_ID);
+  for(int i = 0; i<4 ;i++){
+    dxl.setGoalPosition(DXL_ID, 1900, UNIT_RAW);
+    measureMax(DXL_ID, 1900);
+    dxl.setGoalPosition(DXL_ID, 2200, UNIT_RAW);
+    measureMax(DXL_ID, 2200);
+  }
+  dxl.torqueOff(DXL_ID);
+  dxl.writeControlTableItem(CURRENT_LIMIT, DXL_ID, (int32_t)maxcurrent);
+  dxl.torqueOn(DXL_ID);
+
   dxl.setGoalPosition(DXL_ID, 0, UNIT_RAW);
   reachedGoal(DXL_ID, 0);
   dxl.setGoalPosition(DXL_ID, 4095, UNIT_RAW);
@@ -186,7 +226,12 @@ void sim_movement(){
     }
     //DEBUG_SERIAL.print(tick);
     dxl.setGoalPosition(DXL_ID, tick, UNIT_RAW);
-    reachedGoal(DXL_ID, tick);
+    if (!reachedGoal(DXL_ID, tick)) {
+      // Strom-Trip -> sofort raus
+      Serial.println("CANCEL");
+      cancelled = true;
+      break;
+    }
 
     Serial.print("Soll-Winkel:");
     if(tick == DegToTick(realMid)){
@@ -213,6 +258,12 @@ void sim_movement(){
     //float cur_deg = getRealDegPosition();
     //DEBUG_SERIAL.println(cur_deg, 3);
   }
+  dxl.setGoalPosition(DXL_ID, 2047, UNIT_RAW);
+  reachedGoal(DXL_ID, 2047);
+
+  dxl.torqueOff(DXL_ID);
+  dxl.writeControlTableItem(CURRENT_LIMIT, DXL_ID, 100);
+  dxl.torqueOn(DXL_ID);
   dxl.ledOff(DXL_ID);
 }
 

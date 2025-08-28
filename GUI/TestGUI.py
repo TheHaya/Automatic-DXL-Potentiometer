@@ -2,9 +2,10 @@ import tkinter as tk
 from tkinter import ttk
 import sv_ttk
 import serial, time, threading
+from serial.tools import list_ports
 from itertools import cycle
 import pandas as pd
-
+import xlsxwriter
 calc_win = None
 
 # --------------- SERIAL MIT SERVO
@@ -24,9 +25,21 @@ labels = [  "Mittelposition",
             "Mechanisches Ende CCW (Drehrichtung+)"]
 labels_iter = cycle(labels)
 
+def open_first_available(ports=("COM6", "COM3"), baud=115200, timeout=2):
+    last = None
+    for p in ports:
+        try:
+            ser = serial.Serial(p, baudrate=baud, timeout=timeout)
+            print(f"[SERIAL] Verbunden: {p}")
+            time.sleep(1)
+            return ser
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"Kein Port aus {ports} verfügbar: {last}")
+
 def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_finish):
     try:
-        ser = serial.Serial('COM3', 115200, timeout=2)
+        ser = open_first_available(("COM6","COM3"), baud=115200, timeout=5)
         daten = []
         time.sleep(1)
         ser.write(f"SETV:{gesamtV}\n".encode())
@@ -94,15 +107,15 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 wb = writer.book
                 ws = writer.sheets[sheet]
 
-                format_percent = wb.add_format({'num_format': '0,00%'})
-                format_degree = wb.add_format({'num_format': '0,0°'})
-                format_volt2 = wb.add_format({'num_format': '0,00'})
-                format_volt3 = wb.add_format({'num_format': '0,000'})
+                format_percent = wb.add_format({'num_format': '0.00%','align': 'center'})
+                format_degree = wb.add_format({'num_format': '0.0°','align': 'center'})
+                format_volt2 = wb.add_format({'num_format': '0.00','align': 'center'})
+                format_volt3 = wb.add_format({'num_format': '0.000','align': 'center'})
 
                 ws.set_column('A:A', 44)
                 ws.set_column('B:B', 20, format_degree)
                 ws.set_column('C:C', 20, format_volt2)
-                ws.set_column('C:D', 20, format_volt3)
+                ws.set_column('D:D', 20, format_volt3)
                 ws.set_column('E:E', 20, format_degree)
                 ws.set_column('F:F', 20, format_percent)
 
