@@ -6,28 +6,32 @@
 #define DXL_SERIAL   Serial1
 #define DEBUG_SERIAL Serial
 const int DXL_DIR_PIN = A6;
-const int BUT1 = 6, BUT2 = 7;
+//const int BUT1 = 6, BUT2 = 7;
 
 const uint8_t  DXL_ID = 1;
 const float    DXL_PROTOCOL = 2.0;
 const uint32_t DXL_BAUD = 1000000;
-elapsedMillis but1Millis;
-unsigned long buttonTimer = 150;
+
+const int pollTimer = 1;
+const int32_t measureZone1 = 1700, measureZone2 = 2400, servoMid = 2047;
+
+//elapsedMillis but1Millis;
+//unsigned long buttonTimer = 150;
+//bool but1Up, but2Up;
+//bool but1Press, but2Press;
+
 float startcurrent = 40;
 float maxcurrent = 0;
-bool but1Up, but2Up;
-bool but1Press, but2Press;
+
 bool cancelled;
-float cur_pos;
-float tarVolt = 0.0;
-float realAngleTotal = 0.0;
-float sollAngleTotal = 0.0;
-float d11;
-float d12;
-float d21;
-float d22;
-float d31;
-float d32;
+int32_t cur_pos;
+float tarVolt;
+int32_t stoppedTick;
+int32_t realTickTotal;
+int32_t sollTickTotal;
+float sollDegTotal;
+float d11Deg, d12Deg, d21Deg, d22Deg, d31Deg, d32Deg;
+int32_t d11Tick, d12Tick, d21Tick, d22Tick, d31Tick, d32Tick;
 
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 using namespace ControlTableItem;
@@ -36,16 +40,16 @@ constexpr float DEG_PER_TICK = 360.0f / 4096.0f;
 constexpr float TICK_PER_DEG = 4096.0f / 360.0f;
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(BUT1, INPUT);
-  pinMode(BUT2, INPUT);
+  //pinMode(LED_BUILTIN, OUTPUT);
+  //pinMode(BUT1, INPUT);
+  //pinMode(BUT2, INPUT);
   Serial.begin(115200);
 
   dxl.begin(DXL_BAUD);
   dxl.setPortProtocolVersion(DXL_PROTOCOL);
 
   dxl.torqueOff(DXL_ID);
-  dxl.setOperatingMode(DXL_ID, OP_POSITION);
+  dxl.setOperatingMode(DXL_ID, OP_EXTENDED_POSITION);
   dxl.writeControlTableItem(DRIVE_MODE,    DXL_ID, 1);  // Drive mode reverse bei 1 bedeutet cw ist + und ccw ist -
   dxl.writeControlTableItem(HOMING_OFFSET, DXL_ID, 0); // kein Offset
   dxl.writeControlTableItem(PROFILE_VELOCITY,DXL_ID, 40);
@@ -66,32 +70,58 @@ float getRealDegPosition(){
   return dxl.getPresentPosition(DXL_ID, UNIT_RAW) * DEG_PER_TICK;
 }
 
+int32_t getRealTickPosition(){
+  return dxl.getPresentPosition(DXL_ID, UNIT_RAW);
+}
+
 int32_t DegToTick(float degPos){
   return (int32_t)lroundf(degPos * TICK_PER_DEG);
 }
 
-bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint32_t timeout = 8000){
+bool reachedGoal(uint8_t dxl_id, int32_t target_tick, bool measuring = 0, int32_t err_tick = 1 ,uint32_t timeout = 8000){
   elapsedMillis polling;
   elapsedMillis t;
-  while(t < timeout){
-    if(polling >= 1){
-      int32_t cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
+  elapsedMillis LEDMillis;
+  while(t < timeout && cancelled == false){
+    if(polling >= pollTimer){
+      cur_pos = getRealTickPosition();
       float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
-      if(fabsf(cur_cur) > maxcurrent+1){
-        realAngleTotal = getRealDegPosition();
-        dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
+
+      if (Serial.available()) {
+        String stopCommand = Serial.readStringUntil('\n');
+        stopCommand.trim();
+        if(stopCommand == "STOP"){
+          Serial.print("Vorgang wurde abgebrochen");
+          cancelled = true;
+          break;
+        }
+      }
+
+      if(measuring == 1){
+        if(fabsf(cur_cur) >= startcurrent){
+        dxl.setGoalPosition(dxl_id, getRealTickPosition(), UNIT_RAW);
         return false;
+        }
+        if(maxcurrent < dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE)){
+          maxcurrent = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
+        }
+      } else {
+        if(fabsf(cur_cur) > maxcurrent+1){
+        stoppedTick = getRealTickPosition();
+        for (int i=0;i<3;i++) dxl.setGoalPosition(DXL_ID, getRealTickPosition(), UNIT_RAW);
+        return false;
+        }
       }
 
       if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick < 0) {
         for(int i = 0; i<5 ; i++){
-          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) + 1, UNIT_RAW);
+          dxl.setGoalPosition(dxl_id, getRealTickPosition() + 1, UNIT_RAW);
         } 
         return true;
       }
       else if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick > 0) {
         for(int i = 0; i<5 ; i++){
-          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) - 1, UNIT_RAW);
+          dxl.setGoalPosition(dxl_id, getRealTickPosition() - 1, UNIT_RAW);
         } 
         return true;
       }
@@ -101,129 +131,91 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint
       polling = 0;
     }
   } 
+  dxl.setGoalPosition(dxl_id, getRealTickPosition(), UNIT_RAW);
   return false;
 }
 
-bool measureMax(uint8_t dxl_id, int32_t target_tick, int32_t err_tick = 2 ,uint32_t timeout = 8000){
-  elapsedMillis polling;
-  elapsedMillis t;
-  while(t < timeout){
-    if(polling >= 1){
-      int32_t cur_pos = dxl.getPresentPosition(dxl_id, UNIT_RAW);
-      float cur_cur = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
-      if(fabsf(cur_cur) > startcurrent){
-        dxl.setGoalPosition(dxl_id,dxl.getPresentPosition(dxl_id,UNIT_RAW), UNIT_RAW);
-        return false;
-      }
-      if(maxcurrent < dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE)){
-        maxcurrent = dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE);
-      }
-      
-      if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick < 0) {
-        for(int i = 0; i<5 ; i++){
-          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) + 1, UNIT_RAW);
-        } 
-        return true;
-      }
-      else if ((fabsf(cur_pos - target_tick) <= err_tick) && cur_pos - target_tick > 0) {
-        for(int i = 0; i<5 ; i++){
-          dxl.setGoalPosition(dxl_id, dxl.getPresentPosition(dxl_id,UNIT_RAW) - 1, UNIT_RAW);
-        } 
-        return true;
-      }
-      else if (cur_pos == target_tick){
-        return true;
-      }
-      polling = 0;
-    }
-  } 
-  return false;
-}
-
-
-float deadSollVolt(int32_t tick, float tarVolt, 
-                  float totalAngle, float d12, 
-                  float d21, float d22, float d31){
-
-  const int32_t d12Tick = DegToTick(d12);
-  const int32_t d21Tick = DegToTick(d21);
-  const int32_t d22Tick = DegToTick(d22);
-  const int32_t d31Tick = DegToTick(d31);
-  const float halfVolt = tarVolt / 2;
-
-  if(tick <= d12Tick){return 0;}
-  if(tick <= d21Tick){
-    float alive1 = lerpDead(tick, d12Tick, d21Tick);
-    return halfVolt * alive1;
-  }
-  if(tick <= d22Tick){return halfVolt;}
-  if(tick <= d31Tick){
-    float alive2 = lerpDead(tick, d22Tick, d31Tick);
-    return halfVolt + halfVolt * alive2;
-  }
+float deadSollVoltDeg(float deg, float tarVolt,
+                      float d12Deg, float d21Deg, float d22Deg, float d31Deg) {
+  const float half = tarVolt * 0.5f;
+  if (deg <= d12Deg) return 0.0f;
+  if (deg <= d21Deg) return half * (deg - d12Deg) / (d21Deg - d12Deg);
+  if (deg <= d22Deg) return half;
+  if (deg <= d31Deg) return half + half * (deg - d22Deg) / (d31Deg - d22Deg);
   return tarVolt;
 }
 
 void sim_movement(){
   cancelled = false;
+  maxcurrent = 0;
+  
   dxl.ledOn(DXL_ID);
-  for(int i = 0; i<4 ;i++){
-    dxl.setGoalPosition(DXL_ID, 1900, UNIT_RAW);
-    measureMax(DXL_ID, 1900);
-    dxl.setGoalPosition(DXL_ID, 2200, UNIT_RAW);
-    measureMax(DXL_ID, 2200);
+  for(int i = 0; i<3 ;i++){
+    dxl.setGoalPosition(DXL_ID, measureZone1, UNIT_RAW);
+    reachedGoal(DXL_ID, measureZone1, 1);
+    dxl.setGoalPosition(DXL_ID, measureZone2, UNIT_RAW);
+    reachedGoal(DXL_ID, measureZone2, 1);
   }
+
   dxl.torqueOff(DXL_ID);
-  dxl.writeControlTableItem(CURRENT_LIMIT, DXL_ID, (int32_t)maxcurrent);
+  dxl.writeControlTableItem(CURRENT_LIMIT, DXL_ID, (int32_t)maxcurrent+1);
   dxl.torqueOn(DXL_ID);
 
-  dxl.setGoalPosition(DXL_ID, 0, UNIT_RAW);
-  reachedGoal(DXL_ID, 0);
-  dxl.setGoalPosition(DXL_ID, 4095, UNIT_RAW);
-  reachedGoal(DXL_ID, 4095);
-  dxl.setGoalPosition(DXL_ID, 0, UNIT_RAW);
-  reachedGoal(DXL_ID, 0);
+  dxl.setGoalPosition(DXL_ID, -servoMid, UNIT_RAW);
+  reachedGoal(DXL_ID, -servoMid);
+  int32_t startTick = stoppedTick;
+
   for(int i = 0; i < 5; i++){ // UNBEDINGT FIXEN
     dxl.ledOff(1);
-    delay(150);
+    delay(100);
      dxl.ledOn(1);
-    delay(150);
+    delay(100);
   } 
 
-  realAngleTotal = 331.2; // DAS AUCH
-  sollAngleTotal = 330;// DAS AUCH
-  float posMidSteps = 25;
-  float negMidSteps = 25;
-  float realMid = realAngleTotal / 2;
-  float sollMid = sollAngleTotal / 2;
+  dxl.setGoalPosition(DXL_ID, 3*servoMid, UNIT_RAW);
+  reachedGoal(DXL_ID, 3*servoMid);
+  int32_t endTick = stoppedTick;
+  realTickTotal = endTick - startTick;
 
-  float sim_deg [] = {realMid,
-     d22, d22+negMidSteps, d22+2*negMidSteps, d22+3*negMidSteps, d31, realAngleTotal,
-      d21, d21-posMidSteps, d21-2*posMidSteps, d21-3*posMidSteps, d12, 0};
-  int32_t sim_tick[sizeof(sim_deg)/sizeof(sim_deg[0])];
-  int32_t roundTick;
+  for(int i = 0; i < 5; i++){ // UNBEDINGT FIXEN
+    dxl.ledOff(1);
+    delay(100);
+     dxl.ledOn(1);
+    delay(100);
+  } 
+  // 1° = 11.375 ticks
+  // 1 Tick = 0.08791208791 °
+  float simulation_realDeg = 331.2;
+  realTickTotal = DegToTick(simulation_realDeg); // ca. 331.2°
+  sollTickTotal = DegToTick(sollDegTotal); // ca. 330°
+
+  float midDegs = 25;
+  float realMidDeg = simulation_realDeg/2;
+  float sollMidDeg = sollDegTotal/2;
+  int32_t midSteps = DegToTick(25); // ca. 284 Ticks
+  int32_t realMid = DegToTick(simulation_realDeg/2);
+
+  d11Tick = DegToTick(d11Deg);
+  d12Tick = DegToTick(d12Deg);
+  d21Tick = DegToTick(d21Deg);
+  d22Tick = DegToTick(d22Deg);
+  d31Tick = DegToTick(d31Deg);
+  d32Tick = DegToTick(d32Deg);
+
+  float soll_Deg[] = {realMidDeg,
+     d22Deg, d22Deg+midDegs, d22Deg+2*midDegs, d22Deg+3*midDegs, d31Deg, simulation_realDeg,
+      d21Deg, d21Deg-midDegs, d21Deg-2*midDegs, d21Deg-3*midDegs, d12Deg, 0};
+  int32_t sim_tick [] = {realMid,
+     d22Tick, d22Tick+midSteps, d22Tick+2*midSteps, d22Tick+3*midSteps, d31Tick, realTickTotal,
+      d21Tick, d21Tick-midSteps, d21Tick-2*midSteps, d21Tick-3*midSteps, d12Tick, 0};
   
-  for(size_t i = 0; i<sizeof(sim_deg)/sizeof(sim_deg[0]); i++){    
-    roundTick = (int32_t)lroundf(sim_deg[i] * TICK_PER_DEG);
-    if(roundTick < 0){
-      roundTick = 0;
-    }
-    else if(roundTick > 4095){
-      roundTick = 4095;
-    }
-    sim_tick[i] = roundTick;
+  int32_t drive_tick[sizeof(sim_tick)/sizeof(sim_tick[0])];
+  for(size_t i = 0; i<sizeof(sim_tick)/sizeof(sim_tick[0]); i++){    
+    drive_tick[i] = sim_tick[i] + startTick;
   }
   
-  for (int32_t tick : sim_tick) {
-    if (Serial.available()) {
-      String stopCommand = Serial.readStringUntil('\n');
-      stopCommand.trim();
-      if(stopCommand == "STOP"){
-        Serial.print("Vorgang wurde abgebrochen");
-        cancelled = true;
-        break;
-      }
-    }
+  for (size_t i = 0; i<sizeof(sim_tick)/sizeof(sim_tick[0]); i++) {
+    int32_t tick = drive_tick[i];
     //DEBUG_SERIAL.print(tick);
     dxl.setGoalPosition(DXL_ID, tick, UNIT_RAW);
     if (!reachedGoal(DXL_ID, tick)) {
@@ -233,25 +225,31 @@ void sim_movement(){
       break;
     }
 
+    int32_t relTick = tick - startTick;
+
     Serial.print("Soll-Winkel:");
-    if(tick == DegToTick(realMid)){
-      Serial.print(0);
-    } else if(tick == DegToTick(realAngleTotal) || tick == 0){
-      Serial.print(tick*DEG_PER_TICK-realMid);
+    if(relTick == realMid){
+      Serial.print(soll_Deg[0]-realMidDeg);
+    } else if(relTick == realTickTotal || relTick == 0){
+      Serial.print((relTick - realMid)*DEG_PER_TICK);
     } else{
-      Serial.print(tick*DEG_PER_TICK-sollMid);
+      Serial.print(soll_Deg[i]-sollMidDeg);
     }
     Serial.print(";Soll-Spannung:");
-    Serial.print(deadSollVolt(tick, tarVolt, realAngleTotal, 
-                              d12, d21, d22, d31));
+    Serial.print(deadSollVoltDeg(soll_Deg[i], tarVolt, d12Deg, d21Deg, d22Deg, d31Deg));
 
     Serial.print(";Ist-Spannung:");
     Serial.print(tick/500);
     Serial.print(";Ist-Winkel:");
-    Serial.print(dxl.getPresentPosition(DXL_ID, UNIT_RAW)*DEG_PER_TICK - realMid);
+     if(relTick == realMid){
+      Serial.print(getRealDegPosition() - realMidDeg - startTick*DEG_PER_TICK);
+    } else if(relTick == realTickTotal || relTick == 0){
+      Serial.print((getRealDegPosition() - realMidDeg - startTick*DEG_PER_TICK));
+    } else{
+      Serial.print(getRealDegPosition() - sollMidDeg - startTick*DEG_PER_TICK);
+    }
     Serial.print(";Linearität:");
-    Serial.println((tick/500 - deadSollVolt(tick, tarVolt, realAngleTotal, 
-                              d12, d21, d22, d31))/tarVolt);
+    Serial.println((tick/500 - deadSollVoltDeg(soll_Deg[i], tarVolt, d12Deg, d21Deg, d22Deg, d31Deg))/tarVolt);
     //DEBUG_SERIAL.print("Sollwert: ");
     //DEBUG_SERIAL.print(tick*DEG_PER_TICK, 3);
     //DEBUG_SERIAL.print("----Istwert: ");
@@ -273,24 +271,16 @@ void loop() {
     command.trim();
 
     if(command.startsWith("SETV:")){tarVolt = command.substring(5).toFloat();}
-    if(command.startsWith("SETW:")){sollAngleTotal = command.substring(5).toFloat();}
-    if(command.startsWith("dead11:")){d11 = command.substring(7).toFloat();}
-    if(command.startsWith("dead12:")){d12 = command.substring(7).toFloat();}
-    if(command.startsWith("dead21:")){d21 = command.substring(7).toFloat();}
-    if(command.startsWith("dead22:")){d22 = command.substring(7).toFloat();}
-    if(command.startsWith("dead31:")){d31 = command.substring(7).toFloat();}
-    if(command.startsWith("dead32:")){d32 = command.substring(7).toFloat();}
+    if(command.startsWith("SETW:")){sollDegTotal = command.substring(5).toFloat();}
+    if(command.startsWith("dead11:")){d11Deg = command.substring(7).toFloat();}
+    if(command.startsWith("dead12:")){d12Deg = command.substring(7).toFloat();}
+    if(command.startsWith("dead21:")){d21Deg = command.substring(7).toFloat();}
+    if(command.startsWith("dead22:")){d22Deg = command.substring(7).toFloat();}
+    if(command.startsWith("dead31:")){d31Deg = command.substring(7).toFloat();}
+    if(command.startsWith("dead32:")){d32Deg = command.substring(7).toFloat();}
 
     else if(command == "GO"){
-      //but1Press = digitalRead(BUT1);
-      //if(but1Up == HIGH && but1Press == LOW && but1Millis > buttonTimer) {
-        //DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
-        sim_movement();
-        //DEBUG_SERIAL.print("End Hold: ");
-        //DEBUG_SERIAL.println(dxl.getPresentPosition(DXL_ID, UNIT_RAW));
-      //  but1Millis = 0;
-      //}
-      //but1Up = but1Press;
+      sim_movement();
       if(cancelled == false){
         Serial.println("READY");
       } else{

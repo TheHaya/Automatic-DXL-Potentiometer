@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import ttk
 import sv_ttk
 import serial, time, threading
-from serial.tools import list_ports
 from itertools import cycle
 import pandas as pd
 import xlsxwriter
@@ -62,9 +61,12 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
         #print(d11, d12, d21, d22, d31, d32)
         ser.write(b"GO\n")
 
+        ser.timeout = 0.1
         while True:
             if stop_event.is_set():
                 ser.write(b"STOP\n")
+                ser.flush()
+                time.sleep(0.05)
                 break
 
             line = ser.readline().decode('utf-8').strip()
@@ -134,22 +136,38 @@ def open_calc_win():
     def close_wait_results():
         wait_win.destroy()
 
-        global calc_win
-        if calc_win is not None and calc_win.winfo_exists():
-            calc_win.destroy()
+        if stop_event.is_set():
+            global cancelled_win
+            
+            cancelled_win = tk.Toplevel(root)
+            cancelled_win.title("Abbruch")
+            cancelled_win.geometry(f"{scrwid//4}x{scrhei//4}+{scrwid//2}+{scrhei//2}")
+            cancelled_win.grid_rowconfigure(0, weight=1)
+            cancelled_win.grid_rowconfigure(1, weight=1)
+            cancelled_win.grid_columnconfigure(0, weight=1)
+            
+            ttk.Label(cancelled_win, text="Vorgang wurde abgebrochen.").grid(row=0, column=0)
+            ok_button = ttk.Button(cancelled_win, text="OK", command=cancelled_win.destroy)
+            ok_button.grid(row=1, column=0, pady=(0, 20), ipadx=20)
+            ok_button.focus_set()  
+            cancelled_win.bind("<Return>", lambda event: ok_button.invoke())
+        else:
+            global calc_win
+            if calc_win is not None and calc_win.winfo_exists():
+                calc_win.destroy()
 
-        calc_win = tk.Toplevel(root)
-        calc_win.title("New window")
-        calc_win.geometry(f"{scrwid//4}x{scrhei//4}+{scrwid//2}+{scrhei//2}")
-        calc_win.grid_rowconfigure(0, weight=1)
-        calc_win.grid_rowconfigure(1, weight=1)
-        calc_win.grid_columnconfigure(0, weight=1)
-        
-        ttk.Label(calc_win, text="Messung erfolgreich!").grid(row=0, column=0)
-        ok_button = ttk.Button(calc_win, text="OK", command=calc_win.destroy)
-        ok_button.grid(row=1, column=0, pady=(0, 20), ipadx=20)
-        ok_button.focus_set()  
-        calc_win.bind("<Return>", lambda event: ok_button.invoke())
+            calc_win = tk.Toplevel(root)
+            calc_win.title("Fertig")
+            calc_win.geometry(f"{scrwid//4}x{scrhei//4}+{scrwid//2}+{scrhei//2}")
+            calc_win.grid_rowconfigure(0, weight=1)
+            calc_win.grid_rowconfigure(1, weight=1)
+            calc_win.grid_columnconfigure(0, weight=1)
+            
+            ttk.Label(calc_win, text="Messung erfolgreich!").grid(row=0, column=0)
+            ok_button = ttk.Button(calc_win, text="OK", command=calc_win.destroy)
+            ok_button.grid(row=1, column=0, pady=(0, 20), ipadx=20)
+            ok_button.focus_set()  
+            calc_win.bind("<Return>", lambda event: ok_button.invoke())
 
     try:
         txtSoll = float(txt1.get().strip().replace(',', '.'))
