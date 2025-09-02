@@ -1,11 +1,50 @@
 import tkinter as tk
 from tkinter import ttk
+from PIL import ImageTk, Image
 import sv_ttk
-import serial, time, threading
+import serial, time, threading, json, os
 from itertools import cycle
 import pandas as pd
 import xlsxwriter
+
 calc_win = None
+
+AMLogo = Image.open('AMLogo.jpg')
+scale = 0.8
+w, h = AMLogo.size
+smallLogo = AMLogo.resize((int(w*scale), int(h*scale)))
+
+
+# --------------- PRESETS LADEN
+preset_path = "preset_Teile.json"
+
+def load_presets():
+    try:
+        with open (preset_path, "r", encoding="utf-8") as p:
+            return json.load(p)
+    except Exception as e:
+        print("Fehler beim laden von Presets.", e)
+presets = load_presets()
+
+def set_entry(txtentry, decVal):
+    if isinstance(decVal, (int, float)):
+        val = f"{decVal}".replace('.' , ',')
+    else:
+        val = str(decVal)
+    txtentry.delete(0, tk.END)
+    txtentry.insert(0, val)
+    
+def insert_preset(p):
+    set_entry(txt1, p["sollSpannung"])
+    set_entry(txt6, p["sollWinkel"])
+    set_entry(txt2, p["d11"])
+    set_entry(txt3, p["d12"])
+    set_entry(txt4, p["d21"])
+    set_entry(txt5, p["d22"])
+    set_entry(txt7, p["d31"])
+    set_entry(txt8, p["d32"])
+    set_entry(txt9, p["name"])
+
 
 # --------------- SERIAL MIT SERVO
 
@@ -219,66 +258,92 @@ def open_calc_win():
 root = tk.Tk()
 scrwid = root.winfo_screenwidth()
 scrhei = root.winfo_screenheight()
-root.geometry(f"{scrwid}x{scrhei}+0+0")
+root.geometry(f"{scrwid - scrwid//5}x{scrhei - scrhei//5}+0+0")
 root.title("Test window")
 root.resizable(False, False)
 
-root.grid_rowconfigure(0, weight=1)
-root.grid_columnconfigure(0, weight=1)
 
-main_frame = ttk.Frame(root)
-main_frame.grid(row=0, column=0)
+root.grid_columnconfigure(0, weight=0)
+root.grid_columnconfigure(1, weight=1)
+root.grid_rowconfigure(0, weight=0)
+root.grid_rowconfigure(1, weight=1)
+
+left_frame  = ttk.Frame(root)
+right_frame = ttk.Frame(root)
+left_frame.grid(row=1, column=0, sticky="nw", padx=12, pady=12)
+right_frame.grid(row=1, column=1, sticky="nw",  padx=12, pady=12)
+
+img = ImageTk.PhotoImage(smallLogo)
+panel = tk.Label(root, image=img)
+panel.image = img    
+panel.grid(row=0, column=0, columnspan=2,padx=24, pady=24, sticky="nw")
+
+ttk.Label(left_frame, text="Bauteil Preset:").grid(row=0, column=0, sticky="w", pady=(10, 0), padx=(20,0))
+preset_names = list(presets.keys()) 
+preset_combo = ttk.Combobox(left_frame, values=preset_names, state="readonly", width=16)
+preset_combo.grid(row=1, column=0, sticky="w", padx=(20,0))
+preset_combo.current(0)
+
+def on_select_preset(event=None):
+    name = preset_combo.get()
+    if name in presets:
+        insert_preset(presets[name])
+
+preset_combo.bind("<<ComboboxSelected>>", on_select_preset)
+
+right_frame.grid_columnconfigure(0, weight=0)
+right_frame.grid_columnconfigure(1, weight=0)
 
 vcmd = (root.register(lambda P: (P.count(',') <= 1 and all(ch.isdigit() or ch == ',' for ch in P))), "%P")
 
-ttk.Label(main_frame, text="Sollspannung:").grid(row=0, column=0, sticky="w", pady=(0, 2))
-txt1 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt1.grid(row=1, column=0, pady=(0, 10))
-txt1.insert(0, "10")
-txt1.focus_set()
-
-ttk.Label(main_frame, text="Gesamtwinkel:").grid(row=0, column=1, sticky="w", pady=(0, 2),ipadx=20)
-txt6 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt6.grid(row=1, column=1, pady=(0, 10))
-txt6.insert(0, "330")
-
-ttk.Label(main_frame, text="Anfang Deadzone 1:").grid(row=2, column=0, sticky="w", pady=(0, 2))
-txt2 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt2.grid(row=3, column=0, pady=(0, 10))
-txt2.insert(0, "0")
-
-ttk.Label(main_frame, text="Ende Deadzone 1:").grid(row=2, column=1, sticky="w", pady=(0, 2),ipadx=20)
-txt3 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt3.grid(row=3, column=1, pady=(0, 10))
-txt3.insert(0, "40")
-
-ttk.Label(main_frame, text="Anfang Deadzone 2:").grid(row=4, column=0, sticky="w", pady=(0, 2))
-txt4 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt4.grid(row=5, column=0, pady=(0, 10))
-txt4.insert(0, "140")
-
-ttk.Label(main_frame, text="Ende Deadzone 2:").grid(row=4, column=1, sticky="w", pady=(0, 2),ipadx=20)
-txt5 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt5.grid(row=5, column=1, pady=(0, 10))
-txt5.insert(0, "190")
-
-ttk.Label(main_frame, text="Anfang Deadzone 3:").grid(row=6, column=0, sticky="w", pady=(0, 2))
-txt7 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt7.grid(row=7, column=0, pady=(0, 10))
-txt7.insert(0, "290")
-
-ttk.Label(main_frame, text="Ende Deadzone 3:").grid(row=6, column=1, sticky="w", pady=(0, 2),ipadx=20)
-txt8 = ttk.Entry(main_frame, width=20, validate="key", validatecommand=vcmd)
-txt8.grid(row=7, column=1, pady=(0, 10))
-txt8.insert(0, "330")
-
-ttk.Label(main_frame, text="Name Teil:").grid(row=8, column=0, sticky="w", pady=(0, 2),ipadx=20)
-txt9 = ttk.Entry(main_frame, width=20)
-txt9.grid(row=9, column=0, pady=(0, 10))
+ttk.Label(left_frame, text="Name Teil:").grid(row=4, column=0, sticky="w", pady=(20, 0), padx=(20,0))
+txt9 = ttk.Entry(left_frame, width=20)
+txt9.grid(row=5, column=0, pady=(0, 10), padx=(20,0))
 txt9.insert(0, "T107357")
 
-ttk.Button(main_frame, text="OK", command=close_window).grid(row=10, column=0, pady=(0, 5), ipadx=20)
-ttk.Button(main_frame, text="Calc", command=open_calc_win).grid(row=10, column=1, pady=5, ipadx=10)
+ttk.Label(right_frame, text="Sollspannung:").grid(row=1, column=1, sticky="w", pady=(40, 0), padx=(40,0))
+txt1 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt1.grid(row=2, column=1, pady=(0, 10), padx=(40,0))
+txt1.insert(0, "10,0")
+txt1.focus_set()
+
+ttk.Label(right_frame, text="Gesamtwinkel:").grid(row=1, column=2, sticky="w", pady=(40, 0), padx=(20,0))
+txt6 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt6.grid(row=2, column=2, pady=(0, 10), padx=(20,0))
+txt6.insert(0, "330,0")
+
+ttk.Label(right_frame, text="Anfang Deadzone 1:").grid(row=3, column=1, sticky="w", pady=(10, 0), padx=(40,0))
+txt2 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt2.grid(row=4, column=1, pady=(0, 10), padx=(40,0))
+txt2.insert(0, "0,0")
+
+ttk.Label(right_frame, text="Ende Deadzone 1:").grid(row=3, column=2, sticky="w", pady=(10, 0), padx=(20,0))
+txt3 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt3.grid(row=4, column=2, pady=(0, 10), padx=(20,0))
+txt3.insert(0, "40,0")
+
+ttk.Label(right_frame, text="Anfang Deadzone 2:").grid(row=5, column=1, sticky="w", pady=(10, 0), padx=(40,0))
+txt4 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt4.grid(row=6, column=1, pady=(0, 10), padx=(40,0))
+txt4.insert(0, "140,0")
+
+ttk.Label(right_frame, text="Ende Deadzone 2:").grid(row=5, column=2, sticky="w", pady=(10, 0), padx=(20,0))
+txt5 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt5.grid(row=6, column=2, pady=(0, 10), padx=(20,0))
+txt5.insert(0, "190,0")
+
+ttk.Label(right_frame, text="Anfang Deadzone 3:").grid(row=7, column=1, sticky="w", pady=(10, 0), padx=(40,0))
+txt7 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt7.grid(row=8, column=1, pady=(0, 10), padx=(40,0))
+txt7.insert(0, "290,0")
+
+ttk.Label(right_frame, text="Ende Deadzone 3:").grid(row=7, column=2, sticky="w", pady=(10, 0), padx=(20,0))
+txt8 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
+txt8.grid(row=8, column=2, pady=(0, 10), padx=(20,0))
+txt8.insert(0, "330,0")
+
+ttk.Button(left_frame, text="Abbrechen", command=close_window).grid(row=7, column=0, pady=(4, 5), padx=(0,0), ipadx=40)
+ttk.Button(left_frame, text="Messen", command=open_calc_win).grid(row=6, column=0, pady=(80, 5), padx=(0,0), ipadx=40)
 
 txt1.bind("<Return>", lambda event: open_calc_win())
 txt2.bind("<Return>", lambda event: open_calc_win())
@@ -290,5 +355,6 @@ txt7.bind("<Return>", lambda event: open_calc_win())
 txt8.bind("<Return>", lambda event: open_calc_win())
 root.bind("<Escape>", lambda event: close_window())
 
+on_select_preset()
 sv_ttk.set_theme("dark")
 root.mainloop()
