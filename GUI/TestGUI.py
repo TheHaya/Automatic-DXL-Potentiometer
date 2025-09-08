@@ -2,10 +2,14 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import ImageTk, Image
 import sv_ttk
-import serial, time, threading, json, os
+import serial, time, threading, json, os, re
 from itertools import cycle
 import pandas as pd
 import xlsxwriter
+
+ARDUINO_PORT1 = "COM3"
+ARDUINO_PORT2 = "COM6"
+MULTI_PORT = "COM7"
 
 calc_win = None
 
@@ -45,6 +49,14 @@ def insert_preset(p):
     set_entry(txt8, p["d32"])
     set_entry(txt9, p["name"])
 
+# --------------- SERIAL MIT MULTIMETER
+
+def RegexMultimeter(output):
+    match = re.search(r"[-+]?\d\.\d+(?:[Ee][-+]\d+)", output)
+    #match = re.search("[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?", output)
+    if match:
+        return match.group(0)
+    return None
 
 # --------------- SERIAL MIT SERVO
 
@@ -63,7 +75,7 @@ labels = [  "Mittelposition",
             "Mechanisches Ende CCW (Drehrichtung+)"]
 labels_iter = cycle(labels)
 
-def open_first_available(ports=("COM6", "COM3"), baud=115200, timeout=2):
+def open_first_available(ports=(ARDUINO_PORT1, ARDUINO_PORT2), baud=115200, timeout=2):
     last = None
     for p in ports:
         try:
@@ -77,39 +89,64 @@ def open_first_available(ports=("COM6", "COM3"), baud=115200, timeout=2):
 
 def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_finish):
     try:
-        ser = open_first_available(("COM6","COM3"), baud=115200, timeout=5)
+        ser_Arduino = open_first_available(("COM6","COM3"), baud=115200, timeout=5)
+        try:
+            ser_Multi = serial.Serial(MULTI_PORT, baudrate=9600, timeout = 0.5)
+            print(f"[SERIAL] Verbunden: {MULTI_PORT}")
+        except Exception as e:
+            print("Multimeter kein Port")
         daten = []
         time.sleep(1)
-        ser.write(f"SETV:{gesamtV}\n".encode())
+        ser_Arduino.write(f"SETV:{gesamtV}\n".encode())
         time.sleep(0.2)
-        ser.write(f"SETW:{gesamtW}\n".encode())
+        ser_Arduino.write(f"SETW:{gesamtW}\n".encode())
         time.sleep(0.2)
-        ser.write(f"dead11:{d11}\n".encode())
+        ser_Arduino.write(f"dead11:{d11}\n".encode())
         time.sleep(0.2)
-        ser.write(f"dead12:{d12}\n".encode())
+        ser_Arduino.write(f"dead12:{d12}\n".encode())
         time.sleep(0.2)
-        ser.write(f"dead21:{d21}\n".encode())
+        ser_Arduino.write(f"dead21:{d21}\n".encode())
         time.sleep(0.2)
-        ser.write(f"dead22:{d22}\n".encode())
+        ser_Arduino.write(f"dead22:{d22}\n".encode())
         time.sleep(0.2)
-        ser.write(f"dead31:{d31}\n".encode())
+        ser_Arduino.write(f"dead31:{d31}\n".encode())
         time.sleep(0.2)
-        ser.write(f"dead32:{d32}\n".encode())
+        ser_Arduino.write(f"dead32:{d32}\n".encode())
         time.sleep(0.2)
         print("Sende: GO") #debug
         #print(d11, d12, d21, d22, d31, d32)
-        ser.write(b"GO\n")
+        ser_Arduino.write(b"GO\n")
 
-        ser.timeout = 0.1
+        ser_Arduino.timeout = 0.1
         while True:
             if stop_event.is_set():
-                ser.write(b"STOP\n")
-                ser.flush()
-                time.sleep(0.05)
+                ser_Arduino.write(b"STOP\n")
+                ser_Arduino.flush()
+                time.sleep(0.2)
                 break
 
-            line = ser.readline().decode('utf-8').strip()
+            line = ser_Arduino.readline().decode('utf-8').strip()
             print("Empfangen:", line) #debug
+            if line == 'VOLTR':
+                ser_Multi.reset_input_buffer()
+                ser_Multi.reset_output_buffer()
+                ser_Multi.write(b':MEAS:VOLT:DC?\n')
+                print("geschrieben")
+                time.sleep(0.05)
+                print("sleep 0.2 sek")
+                response = ser_Multi.readline().decode('utf-8', errors='ignore').strip()
+                print("geantwortet")
+                if(RegexMultimeter(response)):
+                    print("check1")
+                    voltage  = float(RegexMultimeter(response))
+                    print("check2")
+                    print(voltage)
+                    ser_Arduino.write(f"ISTV:{voltage}\n".encode())
+                    print("check3")
+                else:
+                    print("Problem bei Response")
+                    None
+                continue
             if line == 'READY':
                 break
             elif line == 'CANCEL':
@@ -127,7 +164,8 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                     print("Fehler beim Parsen:", e) #debug
                     continue
 
-        ser.close()
+        ser_Arduino.close()
+        ser_Multi.close()
 
         if not stop_event.is_set():
             rows = []

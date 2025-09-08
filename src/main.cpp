@@ -78,7 +78,7 @@ int32_t DegToTick(float degPos){
   return (int32_t)lroundf(degPos * TICK_PER_DEG);
 }
 
-bool reachedGoal(uint8_t dxl_id, int32_t target_tick, bool measuring = 0, int32_t err_tick = 1 ,uint32_t timeout = 8000){
+bool reachedGoal(uint8_t dxl_id, int32_t target_tick, bool measuring = 0, int32_t err_tick = 1 ,uint32_t timeout = 20000){
   elapsedMillis polling;
   elapsedMillis t;
   elapsedMillis LEDMillis;
@@ -143,6 +143,10 @@ float deadSollVoltDeg(float deg, float tarVolt,
   if (deg <= d22Deg) return half;
   if (deg <= d31Deg) return half + half * (deg - d22Deg) / (d31Deg - d22Deg);
   return tarVolt;
+}
+
+void correction_movement(){
+  // todo
 }
 
 void sim_movement(){
@@ -214,6 +218,12 @@ void sim_movement(){
     drive_tick[i] = sim_tick[i] + startTick;
   }
   
+  float printSollDeg[sizeof(sim_tick)/sizeof(sim_tick[0])];
+  float printSollVolt[sizeof(sim_tick)/sizeof(sim_tick[0])];
+  float printIstVolt[sizeof(sim_tick)/sizeof(sim_tick[0])];
+  float printIstDeg[sizeof(sim_tick)/sizeof(sim_tick[0])];
+  float printLinear[sizeof(sim_tick)/sizeof(sim_tick[0])];
+
   for (size_t i = 0; i<sizeof(sim_tick)/sizeof(sim_tick[0]); i++) {
     int32_t tick = drive_tick[i];
     //DEBUG_SERIAL.print(tick);
@@ -223,10 +233,52 @@ void sim_movement(){
       Serial.println("CANCEL");
       cancelled = true;
       break;
+    } else {
+      //Serial.println("VOLTREADY");
     }
 
     int32_t relTick = tick - startTick;
+    
 
+    if(relTick == realMid){
+      printSollDeg[i] = soll_Deg[0]-realMidDeg;
+    } else if(relTick == realTickTotal || relTick == 0){
+       printSollDeg[i] = (relTick - realMid)*DEG_PER_TICK;
+    } else{
+       printSollDeg[i] = soll_Deg[i]-sollMidDeg;
+    }
+
+    printSollVolt[i] = deadSollVoltDeg(soll_Deg[i], tarVolt, d12Deg, d21Deg, d22Deg, d31Deg);
+
+    Serial.println("VOLTR");
+
+    delay(50);
+  
+    for(;;){
+      String VCommand = Serial.readStringUntil('\n');
+      VCommand.trim();
+      if(VCommand.startsWith("ISTV:")){
+        printIstVolt[i] = VCommand.substring(5).toFloat();
+        break;
+      }
+
+    }
+      
+      
+  
+
+    if(relTick == realMid){
+      printIstDeg[i] = getRealDegPosition() - realMidDeg - startTick*DEG_PER_TICK;
+    } else if(relTick == realTickTotal || relTick == 0){
+      printIstDeg[i] = (getRealDegPosition() - realMidDeg - startTick*DEG_PER_TICK);
+    } else{
+      printIstDeg[i] = getRealDegPosition() - sollMidDeg - startTick*DEG_PER_TICK;
+    }
+
+    printLinear[i] = (tick/500 - deadSollVoltDeg(soll_Deg[i], tarVolt, d12Deg, d21Deg, d22Deg, d31Deg))/tarVolt;
+
+
+    /*
     Serial.print("Soll-Winkel:");
     if(relTick == realMid){
       Serial.print(soll_Deg[0]-realMidDeg);
@@ -255,6 +307,20 @@ void sim_movement(){
     //DEBUG_SERIAL.print("----Istwert: ");
     //float cur_deg = getRealDegPosition();
     //DEBUG_SERIAL.println(cur_deg, 3);
+    
+    */
+  }
+  for (size_t i = 0; i<sizeof(sim_tick)/sizeof(sim_tick[0]); i++) {
+    Serial.print("Soll-Winkel:");
+    Serial.print(printSollDeg[i]);
+    Serial.print(";Soll-Spannung:");
+    Serial.print(printSollVolt[i]);
+    Serial.print(";Ist-Spannung:");
+    Serial.print(printIstVolt[i]);
+    Serial.print(";Ist-Winkel:");
+    Serial.print(printIstDeg[i]);
+    Serial.print(";Linearität:");
+    Serial.println(printLinear[i]);
   }
   dxl.setGoalPosition(DXL_ID, 2047, UNIT_RAW);
   reachedGoal(DXL_ID, 2047);
