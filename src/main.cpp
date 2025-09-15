@@ -34,7 +34,9 @@ int32_t sollTickTotal;
 float sollDegTotal;
 float d11Deg, d12Deg, d21Deg, d22Deg, d31Deg, d32Deg;
 int32_t d11Tick, d12Tick, d21Tick, d22Tick, d31Tick, d32Tick;
-float istStartVolt, istEndVolt;
+int32_t userGoto;
+float istStartVolt, istEndVolt, istMidVolt;
+float ccwLinks, ccwRechts, cwLinks, cwRechts;
 
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 using namespace ControlTableItem;
@@ -115,7 +117,7 @@ void setDynaSpeed(int speed){
 bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int measuring = 0, int32_t err_tick = 1 ,uint32_t timeout = 20000){
   elapsedMillis polling;
   elapsedMillis t;
-  elapsedMillis LEDMillis;
+
   while(t < timeout && cancelled == false){
     if(polling >= pollTimer){
       cur_pos = getRealTickPosition();
@@ -136,6 +138,7 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int measuring = 0, int32_t
         if(fabsf(cur_cur) > med_maxcurrent+3){
           stoppedTick = getRealTickPosition();
           for (int i=0;i<3;i++) dxl.setGoalPosition(DXL_ID, getRealTickPosition(), UNIT_RAW);
+          Serial.println("Strom MED Fehler");
           return false;
         }
         break;
@@ -143,6 +146,7 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int measuring = 0, int32_t
         case 1:
         if(fabsf(cur_cur) >= startcurrent){
           dxl.setGoalPosition(dxl_id, getRealTickPosition(), UNIT_RAW);
+          Serial.println("Kalibrierung SLOW Fehler");
           return false;
         }
         if(slow_maxcurrent < dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE)){
@@ -153,6 +157,7 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int measuring = 0, int32_t
         case 2:
         if(fabsf(cur_cur) >= startcurrent){
           dxl.setGoalPosition(dxl_id, getRealTickPosition(), UNIT_RAW);
+          Serial.println("Kalibrierung MEDIUM Fehler");
           return false;
         }
         if(med_maxcurrent < dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE)){
@@ -163,6 +168,7 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int measuring = 0, int32_t
         case 3:
         if(fabsf(cur_cur) >= startcurrent){
           dxl.setGoalPosition(dxl_id, getRealTickPosition(), UNIT_RAW);
+          Serial.println("Kalibrierung FAST Fehler");
           return false;
         }
         if(fast_maxcurrent < dxl.getPresentCurrent(dxl_id, UNIT_MILLI_AMPERE)){
@@ -178,17 +184,19 @@ bool reachedGoal(uint8_t dxl_id, int32_t target_tick, int measuring = 0, int32_t
         break;
 
         case 5:
-        if(fabsf(cur_cur) > slow_maxcurrent+1){
+        if(fabsf(cur_cur) > slow_maxcurrent+2){
           stoppedTick = getRealTickPosition();
           for (int i=0;i<3;i++) dxl.setGoalPosition(DXL_ID, getRealTickPosition(), UNIT_RAW);
+          Serial.println("Strom SLOW Fehler");
           return false;
         }
         break;
 
         case 6:
-        if(fabsf(cur_cur) > fast_maxcurrent+3){
+        if(fabsf(cur_cur) > fast_maxcurrent+5){
           stoppedTick = getRealTickPosition();
           for (int i=0;i<3;i++) dxl.setGoalPosition(DXL_ID, getRealTickPosition(), UNIT_RAW);
+          Serial.println("Strom FAST Fehler");
           return false;
         }
         break;
@@ -226,8 +234,99 @@ float deadSollVoltDeg(float deg, float tarVolt,
   return tarVolt;
 }
 
-void correction_movement(){
-  // todo
+float corr_measure(float currentVolt){
+  cancelled = false;
+  Serial.println("VOLTR");
+  delay(50);
+  if(cancelled == false){
+    for(;;){
+    String VCommand = Serial.readStringUntil('\n');
+    VCommand.trim();
+      if(VCommand.startsWith("ISTV:")){
+        currentVolt = VCommand.substring(5).toFloat();
+        break;
+      }
+    }
+  }
+  return currentVolt;
+}
+
+// deadDirection 0 -> deadzone links von position //////--- ;;; 1 -> rechts von position ---//////
+float correction_movement(float &currentVolt, float goalVolt, int deadDirection = 0, int timeout = 8000){
+const float v_tol = 0.0001f;        
+const int32_t tick_tol = 2;
+int32_t low, high;
+currentVolt = corr_measure(currentVolt);
+
+while (!cancelled && fabsf(currentVolt - goalVolt) <= v_tol) {
+  int32_t t = 0;
+  if(deadDirection == 0){ // dead links
+    t = getRealTickPosition() + 20;
+  } else if(deadDirection == 1){ // dead rechts
+    t = getRealTickPosition() - 20;
+  }
+  dxl.setGoalPosition(DXL_ID, t, UNIT_RAW);
+  reachedGoal(DXL_ID, t, 6);
+  currentVolt = corr_measure(currentVolt);
+}
+
+high = getRealTickPosition();
+
+while (!cancelled && fabsf(currentVolt - goalVolt) > v_tol) {
+  int32_t t = 0;
+  if(deadDirection == 0){
+    t = getRealTickPosition() - 5;
+  } else if(deadDirection == 1){
+    t = getRealTickPosition() + 5;
+  }
+  dxl.setGoalPosition(DXL_ID, t, UNIT_RAW);
+  reachedGoal(DXL_ID, t, 6);
+  currentVolt = corr_measure(currentVolt);
+}
+
+low = getRealTickPosition();
+
+while (!cancelled && abs(high - low) > tick_tol) {
+  int32_t mid = (high + low) / 2;
+  dxl.setGoalPosition(DXL_ID, mid, UNIT_RAW);
+  reachedGoal(DXL_ID, mid, 6);
+
+  currentVolt = corr_measure(currentVolt);
+  if (fabsf(currentVolt - goalVolt) > v_tol) {
+    high = mid;
+  } else {
+    low = mid;
+  }
+}
+float edgeDeg = 0;
+  if(deadDirection == 0){
+    edgeDeg = TickToDeg(high);
+  } else if(deadDirection == 1){
+    edgeDeg = TickToDeg(low);
+  }
+return edgeDeg;
+}
+
+// ------------------ Random GUI buttons für debugging
+void goLeft(){
+  cancelled = false;
+  setDynaSpeed(fastSpeed);
+  dxl.setGoalPosition(DXL_ID, getRealTickPosition()-10, UNIT_RAW);
+  reachedGoal(DXL_ID, getRealTickPosition()-10, 4);
+}
+
+void goRight(){
+  cancelled = false;
+  setDynaSpeed(fastSpeed);
+  dxl.setGoalPosition(DXL_ID, getRealTickPosition()+5, UNIT_RAW);
+  reachedGoal(DXL_ID, getRealTickPosition()+5, 4);
+}
+
+void goTo(){
+  cancelled = false;
+  setDynaSpeed(fastSpeed);
+  dxl.setGoalPosition(DXL_ID, userGoto, UNIT_RAW);
+  reachedGoal(DXL_ID, userGoto, 4);
 }
 
 void zero_movement(){
@@ -237,6 +336,8 @@ void zero_movement(){
   reachedGoal(DXL_ID, 2047, 4);
 }
 
+// ----------------- MESSVORGANG
+
 void sim_movement(){
   cancelled = false;
   med_maxcurrent = 0;
@@ -244,6 +345,10 @@ void sim_movement(){
   dxl.ledOn(DXL_ID);
   
   // --------------- MAX. STROM/TORQUE MESSEN
+  setDynaSpeed(fastSpeed);
+  dxl.setGoalPosition(DXL_ID, measureZone1, UNIT_RAW);
+  reachedGoal(DXL_ID, measureZone1, 4);
+
   for(int i = 1; i<=3; i++){
     setDynaSpeed(i);
     dxl.setGoalPosition(DXL_ID, measureZone2, UNIT_RAW);
@@ -260,19 +365,7 @@ void sim_movement(){
   dxl.setGoalPosition(DXL_ID, -servoMid, UNIT_RAW);
   reachedGoal(DXL_ID, -servoMid, 5);
   int32_t startTick = stoppedTick;
-  Serial.println("VOLTR");
-  delay(50);
-  if(cancelled == false){
-    for(;;){
-    String VCommand = Serial.readStringUntil('\n');
-    VCommand.trim();
-      if(VCommand.startsWith("ISTV:")){
-        istStartVolt = VCommand.substring(5).toFloat();
-        break;
-      }
-    }
-  }
-  
+  istStartVolt = corr_measure(istStartVolt);
 
   for(int i = 0; i < 5; i++){ // UNBEDINGT FIXEN
     dxl.ledOff(1);
@@ -289,18 +382,7 @@ void sim_movement(){
   reachedGoal(DXL_ID, 3*servoMid, 5);
   int32_t endTick = stoppedTick;
   realTickTotal = endTick - startTick;
-  Serial.println("VOLTR");
-  delay(50);
-  if(cancelled == false){
-    for(;;){
-    String VCommand = Serial.readStringUntil('\n');
-    VCommand.trim();
-      if(VCommand.startsWith("ISTV:")){
-        istEndVolt = VCommand.substring(5).toFloat();
-        break;
-      }
-    }
-  }
+  istEndVolt = corr_measure(istEndVolt);
   
   for(int i = 0; i < 5; i++){ // UNBEDINGT FIXEN
     dxl.ledOff(1);
@@ -309,6 +391,7 @@ void sim_movement(){
     delay(100);
   } 
 
+  
   // --------------- ALLE PUNKTE DAZWISCHEN ERMITTELN
   // 1° = 11.375 ticks
   // 1 Tick = 0.08791208791 °
@@ -320,8 +403,20 @@ void sim_movement(){
   float realMidDeg = realDegTotal/2;
   float sollMidDeg = sollDegTotal/2;
   int32_t midSteps = DegToTick(25); // ca. 284 Ticks
-  int32_t realMid = DegToTick(realDegTotal/2);
+  int32_t realMid = realTickTotal/2;
   int32_t offsetVonSoll = (realTickTotal-sollTickTotal) / 2;
+
+  setDynaSpeed(fastSpeed);
+  dxl.setGoalPosition(DXL_ID, realMid + startTick, UNIT_RAW);
+  reachedGoal(DXL_ID, realMid + startTick, 6);
+  istMidVolt = corr_measure(istMidVolt);
+  
+  for(int i = 0; i < 5; i++){ // UNBEDINGT FIXEN (maybe)
+    dxl.ledOff(1);
+    delay(100);
+    dxl.ledOn(1);
+    delay(100);
+  } 
 
   d11Tick = DegToTick(d11Deg);
   d12Tick = DegToTick(d12Deg);
@@ -383,7 +478,7 @@ void sim_movement(){
 
     // IST-SPANNUNG
     if(relTick == mercyEnd){
-      printIstVolt[i] = istEndVolt-istStartVolt;
+      printIstVolt[i] = istEndVolt - istStartVolt;
     } else if(relTick == mercyStart) {
       printIstVolt[i] = 0;
     } else {
@@ -408,7 +503,20 @@ void sim_movement(){
       printIstDeg[i] = realMidDeg;
     } else if(relTick == mercyStart){
       printIstDeg[i] = -realMidDeg;
-    } else{
+    } else if(relTick == d12Tick + offsetVonSoll){
+      printIstDeg[i] = correction_movement(printIstVolt[i], istStartVolt, 0) - TickToDeg(startTick) - realMidDeg;
+      ccwLinks = printIstDeg[i];
+    } else if(relTick == d21Tick + offsetVonSoll){
+      printIstDeg[i] = correction_movement(printIstVolt[i], istMidVolt, 1) - TickToDeg(startTick) - realMidDeg;
+      ccwRechts = printIstDeg[i];
+    } else if(relTick == d22Tick + offsetVonSoll){
+      printIstDeg[i] = correction_movement(printIstVolt[i], istMidVolt, 0) - TickToDeg(startTick) - realMidDeg;
+      cwLinks = printIstDeg[i];
+    } else if(relTick == d31Tick + offsetVonSoll){
+      printIstDeg[i] = correction_movement(printIstVolt[i], istEndVolt, 1) - TickToDeg(startTick) - realMidDeg;
+      cwRechts = printIstDeg[i];
+    }
+    else{
       printIstDeg[i] = getRealDegPosition() - realMidDeg - TickToDeg(startTick);
     }
 
@@ -416,7 +524,7 @@ void sim_movement(){
     printLinear[i] = (printIstVolt[i] - deadSollVoltDeg(soll_Deg[i], tarVolt, d12Deg, d21Deg, d22Deg, d31Deg))/tarVolt;
   }
 
-  // ÜBERGABE AN PYTHON
+  // --------------- ÜBERGABE AN PYTHON
   for (size_t i = 0; i<sizeof(sim_tick)/sizeof(sim_tick[0]); i++) {
     Serial.print("Soll-Winkel:");
     Serial.print(printSollDeg[i],1);
@@ -429,6 +537,22 @@ void sim_movement(){
     Serial.print(";Linearität:");
     Serial.println(printLinear[i],6);
   }
+
+  float totzone = cwLinks - ccwRechts;
+  float aktivCCW = fabsf(ccwLinks - ccwRechts);
+  float aktivCW = (cwRechts - cwLinks);
+  float gesAktiv = aktivCCW + aktivCW;
+  Serial.print("SUMMARY;");
+  Serial.print("Totzone:");   
+  Serial.print(totzone, 1);
+  Serial.print(";AktivCW:"); 
+  Serial.print(aktivCW, 1);
+  Serial.print(";AktivCCW:");
+  Serial.print(aktivCCW, 1);
+  Serial.print(";AktivSumme:");
+  Serial.println(gesAktiv, 1);
+
+
   dxl.setGoalPosition(DXL_ID, 2047, UNIT_RAW);
   reachedGoal(DXL_ID, 2047, 6);
   dxl.ledOff(DXL_ID);
@@ -449,12 +573,15 @@ void loop() {
     if(command.startsWith("dead31:")){d31Deg = command.substring(7).toFloat();}
     if(command.startsWith("dead32:")){d32Deg = command.substring(7).toFloat();}
 
+    if(command.startsWith("goto:")){userGoto = command.substring(5).toFloat();}
+
     else if(command == "GO"){
       sim_movement();
       if(cancelled == false){
         Serial.println("READY");
       } else{
         Serial.println("CANCEL");
+        cancelled = false;
       }
     }
     else if(command =="ZERO"){
@@ -463,6 +590,46 @@ void loop() {
         Serial.println("READY");
       } else{
         Serial.println("CANCEL");
+        cancelled = false;
+      }
+    } // -------------- AB HIER RANDOM DEBUG BUTTONS
+    else if(command =="LEFT"){
+      goLeft();
+      if(cancelled == false){
+        Serial.println("READY");
+      } else{
+        Serial.println("CANCEL");
+        cancelled = false;
+      }
+    }
+    else if(command =="RIGHT"){
+      goRight();
+      if(cancelled == false){
+        Serial.println("READY");
+      } else{
+        Serial.println("CANCEL");
+        cancelled = false;
+      }
+    }
+    else if(command =="POS"){
+      if(cancelled == false){
+        Serial.println(getRealDegPosition()-15.7-165.7);
+        delay(0.1);
+        Serial.println(getRealTickPosition());
+        delay(0.1);
+        Serial.println("READY");
+      } else{
+        Serial.println("CANCEL");
+        cancelled = false;
+      }
+    }
+    else if(command =="GOTO"){
+      if(cancelled == false){
+        goTo();
+        Serial.println("READY");
+      } else{
+        Serial.println("CANCEL");
+        cancelled = false;
       }
     }
   }

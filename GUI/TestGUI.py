@@ -12,7 +12,7 @@ ARDUINO_PORT2 = "COM6"
 MULTI_PORT = "COM7"
 
 calc_win = None
-
+ser_Arduino = None
 AMLogo = Image.open('AMLogo.jpg')
 scale = 0.8
 w, h = AMLogo.size
@@ -96,6 +96,7 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
         except Exception as e:
             print("Multimeter kein Port")
         daten = []
+        summary_vals = {}
         time.sleep(1)
         ser_Arduino.write(f"SETV:{gesamtV}\n".encode())
         time.sleep(0.2)
@@ -152,6 +153,16 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 break
             elif line == 'CANCEL':
                 break
+            if line.startswith("SUMMARY;"):
+                try:
+                    parts = line.split(";")[1:]  # alles nach "SUMMARY;"
+                    for p in parts:
+                        if ":" in p:
+                            k, v = p.split(":", 1)
+                            summary_vals[k] = float(v)  # C++ sendet mit Punkt
+                except Exception as e:
+                    print("Fehler SUMMARY-Parse:", e)
+                continue  # nächste Zeile lesen
             if line:
                 try:
                     parts = line.split(";")
@@ -164,6 +175,7 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 except Exception as e:
                     print("Fehler beim Parsen:", e) #debug
                     continue
+            
 
         ser_Arduino.close()
         ser_Multi.close()
@@ -200,6 +212,36 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 ws.set_column('F:F', 20, format_percent)
 
                 ws.freeze_panes(1,0)
+
+                # --- Zusätzliche Zeilen unterhalb der Tabelle ------------------------------
+                start = len(df) + 2  # 1 für Header + 1 Leerzeile
+
+                # Fallbacks, falls nichts kam
+                totzone   = summary_vals.get("Totzone")
+                activeCW  = summary_vals.get("AktivCW")
+                activeCCW = summary_vals.get("AktivCCW")
+                activeSum = summary_vals.get("AktivSumme")
+
+                # Formate hast du schon (format_degree etc.)
+                ws.write(start + 0, 0, "Totzone")
+                if totzone is not None:
+                    ws.write_number(start + 0, 1, totzone, format_degree)
+
+                ws.write(start + 1, 0, "Winkel Aktiver Bereich CW (Drehrichtung-)(11)")
+                if activeCW is not None:
+                    ws.write_number(start + 1, 1, activeCW, format_degree)
+
+                ws.write(start + 2, 0, "Winkel Aktiver Bereich CCW (Drehrichtung+)(13)")
+                if activeCCW is not None:
+                    ws.write_number(start + 2, 1, activeCCW, format_degree)
+
+                ws.write_blank(start + 3, 0, None)
+                ws.write_blank(start + 3, 1, None)
+
+                ws.write(start + 4, 0, "Aktive Bereiche Gesamt")
+                if activeSum is not None:
+                    ws.write_number(start + 4, 1, activeSum, format_degree)
+
     except Exception as e:
         print("Fehler bei Serial: ", e) #debug
 
@@ -207,6 +249,95 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
 
 def close_window():
     root.destroy()
+
+def go_left():
+    try:
+        global ser_Arduino
+        if ser_Arduino is None or not ser_Arduino.is_open:
+            print("Nicht verbunden.")
+            return
+        
+        ser_Arduino.reset_input_buffer() 
+        ser_Arduino.reset_output_buffer()
+        time.sleep(1)
+        print("LEFT geschrieben")
+        ser_Arduino.write(b"LEFT\n")
+        ser_Arduino.timeout = 0.1
+        while True:
+            line = ser_Arduino.readline().decode('utf-8').strip()
+            print("Empfangen:", line) #debug
+            if line == 'READY':
+                break
+            if line == 'CANCEL':
+                break
+    except Exception as e:
+        print("Fehler bei Serial: ", e) #debug
+
+def go_Right():
+    try:
+        ser_Arduino.write(b"RIGHT\n")
+        print("RIGHT geschrieben")
+        ser_Arduino.timeout = 0.1
+        while True:
+            line = ser_Arduino.readline().decode('utf-8').strip()
+            print("Empfangen:", line) #debug
+            if line == 'READY':
+                break
+            if line == 'CANCEL':
+                break
+    except Exception as e:
+        print("Fehler bei Serial: ", e) #debug
+
+def ser_Connect():
+    try:
+        global ser_Arduino
+        if ser_Arduino is not None:
+            ser_Arduino.close()
+            ser_Arduino = None
+            print("Serial Disconnected")
+        else:
+            ser_Arduino = open_first_available(("COM6","COM3"), baud=115200, timeout=5)
+            ser_Arduino.reset_input_buffer() 
+            ser_Arduino.reset_output_buffer()
+            time.sleep(1)
+            print("Serial Connected")
+    except Exception as e:
+        print("Fehler bei Serial: ", e) #debug
+
+def curr_Pos():
+    try:
+        ser_Arduino.write(b"POS\n")
+        print("POS geschrieben")
+        ser_Arduino.timeout = 0.1
+        while True:
+            line = ser_Arduino.readline().decode('utf-8').strip()
+            print("Empfangen:", line) #debug
+            time.sleep(0.1)
+            if line == 'READY':
+                break
+            if line == 'CANCEL':
+                break
+    except Exception as e:
+        print("Fehler bei Serial: ", e) #debug
+
+def goto():
+    try:
+        txtgoto = float(txtgo.get().strip())
+        ser_Arduino.write(f"goto:{txtgoto}\n".encode())
+        time.sleep(0.2)
+        ser_Arduino.write(b"GOTO\n")
+        print("GOTO geschrieben")
+        ser_Arduino.timeout = 0.1
+        while True:
+            line = ser_Arduino.readline().decode('utf-8').strip()
+            print("Empfangen:", line) #debug
+            time.sleep(0.1)
+            if line == 'READY':
+                break
+            if line == 'CANCEL':
+                break
+    except Exception as e:
+        print("Fehler bei Serial: ", e) #debug
 
 def go_zero(stop_event, on_finish):
     try:
@@ -462,9 +593,17 @@ txt8 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
 txt8.grid(row=8, column=2, pady=(0, 10), padx=(20,0))
 txt8.insert(0, "330,0")
 
+txtgo = ttk.Entry(left_frame, width=20, validate="key", validatecommand=vcmd)
+txtgo.grid(row=3, column=1, pady=(0, 0), padx=(0,0))
+
 ttk.Button(left_frame, text="Abbrechen", command=close_window).grid(row=7, column=0, pady=(4, 5), padx=(0,0), ipadx=40)
 ttk.Button(left_frame, text="Messen", command=open_calc_win).grid(row=6, column=0, pady=(80, 5), padx=(0,0), ipadx=40)
 ttk.Button(left_frame, text="Position 0", command=open_zero_window).grid(row=8, column=0, pady=(80, 5), padx=(0,0), ipadx=40)
+ttk.Button(left_frame, text="0.1 Links", command=go_left).grid(row=6, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+ttk.Button(left_frame, text="0.1 Rechts", command=go_Right).grid(row=7, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+ttk.Button(left_frame, text="Conn Serial", command=ser_Connect).grid(row=5, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+ttk.Button(left_frame, text="Curr Position", command=curr_Pos).grid(row=8, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+ttk.Button(left_frame, text="Go To", command=goto).grid(row=4, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
 
 txt1.bind("<Return>", lambda event: open_calc_win())
 txt2.bind("<Return>", lambda event: open_calc_win())
