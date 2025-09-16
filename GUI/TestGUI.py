@@ -4,6 +4,7 @@ from PIL import ImageTk, Image
 import sv_ttk
 import serial, time, threading, json, os, re
 from itertools import cycle
+from datetime import datetime
 import pandas as pd
 import xlsxwriter
 
@@ -96,6 +97,8 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
         except Exception as e:
             print("Multimeter kein Port")
         daten = []
+        linear_sollV = []
+        linear_lin = []
         summary_vals = {}
         time.sleep(1)
         ser_Arduino.write(f"SETV:{gesamtV}\n".encode())
@@ -149,29 +152,39 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                     print("Problem bei Response")
                     None
                 continue
-            if line == 'READY':
+            elif line == 'READY':
                 break
             elif line == 'CANCEL':
                 break
-            if line.startswith("SUMMARY;"):
+            elif line.startswith("SUMMARY;"):
                 try:
-                    parts = line.split(";")[1:]  # alles nach "SUMMARY;"
+                    parts = line.split(";")[1:]
                     for p in parts:
                         if ":" in p:
-                            k, v = p.split(":", 1)
-                            summary_vals[k] = float(v)  # C++ sendet mit Punkt
+                            i, val = p.split(":", 1)
+                            summary_vals[i] = float(val)
                 except Exception as e:
                     print("Fehler SUMMARY-Parse:", e)
-                continue  # nächste Zeile lesen
-            if line:
+                continue
+            elif line.startswith("LINEAR;"):
+                try:
+                    parts = line.split(";")[1:]
+                    keys = dict(p.split(":", 1) for p in parts if ":" in p)
+                    linear_sollV.append(float(keys["Soll-Spannung Real"]))
+                    linear_lin.append(float(keys["Linearität"]))
+                except Exception as e:
+                    print("Fehler LINEAR-Parse:", e)
+                continue
+            elif line:
                 try:
                     parts = line.split(";")
                     sollwinkel = float(parts[0].split(":")[1])
                     sollspannung = float(parts[1].split(":")[1])
                     istspannung = float(parts[2].split(":")[1])
                     istwinkel = float(parts[3].split(":")[1])
-                    linear = float(parts[4].split(":")[1])
-                    daten.append([sollwinkel, sollspannung, istspannung, istwinkel, linear])
+                    realwinkelmitte = float(parts[4].split(":")[1])
+                    daten.append([sollwinkel, sollspannung, istspannung, istwinkel, 
+                                  realwinkelmitte])
                 except Exception as e:
                     print("Fehler beim Parsen:", e) #debug
                     continue
@@ -182,18 +195,24 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
 
         if not stop_event.is_set():
             rows = []
-            for(sollwinkel, sollspannung, istspannung, istwinkel, linear), label in zip(daten, labels_iter):
+            for(sollwinkel, sollspannung, istspannung, istwinkel, 
+                                  realwinkelmitte), label in zip(daten, labels_iter):
                 rows.append({
                     " ": label,
                     "Soll-Winkel [°]": round(sollwinkel, 1),
                     "Soll-Spannung [V]": round(sollspannung, 2),
                     "Ist-Spannung [V]": round(istspannung, 3),
                     "Ist-Winkel [°]": round(istwinkel, 1),
-                    "Linearität":  float(linear)
+                    "Realer Winkel zur Mitte [°]": round(realwinkelmitte, 1),
+                    #"Soll-Spannung Real [V]": round(realsollspannung, 3),
+                    #"Linearität":  float(linear)
                 })
             df = pd.DataFrame(rows)
+            df["Soll-Spannung Real [V]"] = [round(v, 3) for v in linear_sollV]
+            df["Linearität"] = [float(f"{v:.6f}") for v in linear_lin]
 
-            with pd.ExcelWriter("Alwin-RMTest-"+txt9.get()+".xlsx", engine="xlsxwriter") as writer:
+            dateName = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            with pd.ExcelWriter("Alwin-RMTest-"+txt9.get()+dateName+".xlsx", engine="xlsxwriter") as writer:
                 sheet = "Messung"
                 df.to_excel(writer, index=False, sheet_name=sheet)
                 wb = writer.book
@@ -209,7 +228,7 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 ws.set_column('C:C', 20, format_volt2)
                 ws.set_column('D:D', 20, format_volt3)
                 ws.set_column('E:E', 20, format_degree)
-                ws.set_column('F:F', 20, format_percent)
+                ws.set_column('F:F', 20, format_degree)
 
                 ws.freeze_panes(1,0)
 
