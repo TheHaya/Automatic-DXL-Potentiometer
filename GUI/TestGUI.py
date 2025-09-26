@@ -7,10 +7,12 @@ from itertools import cycle
 from datetime import datetime
 import pandas as pd
 import xlsxwriter
+from openpyxl import load_workbook
 
 ARDUINO_PORT1 = "COM3"
 ARDUINO_PORT2 = "COM6"
 MULTI_PORT = "COM7"
+
 
 calc_win = None
 ser_Arduino = None
@@ -48,7 +50,6 @@ def insert_preset(p):
     set_entry(txt5, p["d22"])
     set_entry(txt7, p["d31"])
     set_entry(txt8, p["d32"])
-    set_entry(txt9, p["name"])
 
 # --------------- SERIAL MIT MULTIMETER
 
@@ -96,11 +97,15 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
             print(f"[SERIAL] Verbunden: {MULTI_PORT}")
         except Exception as e:
             print("Multimeter kein Port")
+        N = 13 #Anz Messpunkte wegen leere Zellen
         daten = []
-        linear_sollV = []
-        linear_lin = []
+        linear_sollV = [None] * N
+        linear_lin = [None] * N
+        error_lin_idx = set()
+        lin_max = None
+        lin_min = None
         summary_vals = {}
-        time.sleep(1)
+        time.sleep(0.2)
         ser_Arduino.write(f"SETV:{gesamtV}\n".encode())
         time.sleep(0.2)
         ser_Arduino.write(f"SETW:{gesamtW}\n".encode())
@@ -136,26 +141,22 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 ser_Multi.reset_input_buffer()
                 ser_Multi.reset_output_buffer()
                 ser_Multi.write(b':MEAS:VOLT:DC?\n')
-                print("geschrieben")
+                #print("geschrieben")
                 time.sleep(0.05)
-                print("sleep 0.2 sek")
+                #print("sleep 0.2 sek")
                 response = ser_Multi.readline().decode('utf-8', errors='ignore').strip()
-                print("geantwortet")
+                #print("geantwortet")
                 if(RegexMultimeter(response)):
-                    print("check1")
+                    #print("check1")
                     voltage  = float(RegexMultimeter(response))
-                    print("check2")
+                    #print("check2")
                     print(voltage)
                     ser_Arduino.write(f"ISTV:{voltage}\n".encode())
-                    print("check3")
+                    #print("check3")
                 else:
                     print("Problem bei Response")
                     None
                 continue
-            elif line == 'READY':
-                break
-            elif line == 'CANCEL':
-                break
             elif line.startswith("SUMMARY;"):
                 try:
                     parts = line.split(";")[1:]
@@ -168,14 +169,33 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 continue
             elif line.startswith("LINEAR;"):
                 try:
-                    parts = line.split(";")[1:]
-                    keys = dict(p.split(":", 1) for p in parts if ":" in p)
-                    linear_sollV.append(float(keys["Soll-Spannung Real"]))
-                    linear_lin.append(float(keys["Linearität"]))
+                    parts = dict(p.split(":", 1) for p in line.split(";")[1:])
+                    i = int(parts["idx"])
+                    if "Soll-Spannung Real" in parts:
+                        linear_sollV[i] = float(parts["Soll-Spannung Real"])
+                        print(linear_sollV[i])
+                    if "Linearität" in parts:
+                        linear_lin[i] = float(parts["Linearität"])
+                        print(linear_lin[i])
                 except Exception as e:
                     print("Fehler LINEAR-Parse:", e)
                 continue
-            elif line:
+            elif line.startswith("ERROR_LIN;"):
+                try:
+                    parts = dict(p.split(":", 1) for p in line.split(";")[1:])
+                    
+                    idx_str = parts.get("IDX", "")
+                    if idx_str:
+                        error_lin_idx = {int(s) for s in idx_str.split(",") if s.strip().isdigit()}
+                    
+                    if "LIN_MAX" in parts:
+                        lin_max = float(parts["LIN_MAX"])
+                    if "LIN_MIN" in parts:
+                        lin_min = float(parts["LIN_MIN"])
+                except Exception as e:
+                    print("Fehler ERROR_LIN-Parse:", e)
+                continue
+            elif line.startswith("Soll-Winkel:"):
                 try:
                     parts = line.split(";")
                     sollwinkel = float(parts[0].split(":")[1])
@@ -188,6 +208,10 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 except Exception as e:
                     print("Fehler beim Parsen:", e) #debug
                     continue
+            elif line == 'READY':
+                break
+            elif line == 'CANCEL':
+                break
             
 
         ser_Arduino.close()
@@ -208,11 +232,21 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                     #"Linearität":  float(linear)
                 })
             df = pd.DataFrame(rows)
-            df["Soll-Spannung Real [V]"] = [round(v, 3) for v in linear_sollV]
-            df["Linearität"] = [float(f"{v:.6f}") for v in linear_lin]
+            
+            L = len(df)  # zur Sicherheit auf gleiche Länge bringen
 
-            dateName = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            with pd.ExcelWriter("Alwin-RMTest-"+txt9.get()+dateName+".xlsx", engine="xlsxwriter") as writer:
+            def round_sollReal(x): 
+                return None if x is None else round(x, 3)
+
+            def round_linear(x): 
+                return None if x is None else float(x)
+
+            df["Soll-Spannung Real [V]"] = [round_sollReal(v) for v in linear_sollV[:L]]
+            df["Linearität"] = [round_linear(v) for v in linear_lin[:L]]
+
+            path = r"C:\HSBI\Praktikum"
+            book = load_workbook(path)
+            with pd.ExcelWriter("RMTest-"+txt9.get()+".xlsx", engine="openpyxl") as writer:
                 sheet = "Messung"
                 df.to_excel(writer, index=False, sheet_name=sheet)
                 wb = writer.book
@@ -222,17 +256,21 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 format_degree = wb.add_format({'num_format': '0.0°','align': 'center'})
                 format_volt2 = wb.add_format({'num_format': '0.00','align': 'center'})
                 format_volt3 = wb.add_format({'num_format': '0.000','align': 'center'})
+                format_header = wb.add_format({'text_wrap': True, 'align': 'center', 'valign': 'vcenter', 'bold': True})
+                format_error_percent = wb.add_format({'num_format': '0.00%', 'align': 'center', 'bg_color': "#F86A5A"})
 
+                ws.set_row(0, 35, format_header)
                 ws.set_column('A:A', 44)
                 ws.set_column('B:B', 20, format_degree)
                 ws.set_column('C:C', 20, format_volt2)
                 ws.set_column('D:D', 20, format_volt3)
                 ws.set_column('E:E', 20, format_degree)
                 ws.set_column('F:F', 20, format_degree)
+                ws.set_column('G:G', 20, format_volt3)
+                ws.set_column('H:H', 20, format_percent)
 
                 ws.freeze_panes(1,0)
 
-                # --- Zusätzliche Zeilen unterhalb der Tabelle ------------------------------
                 start = len(df) + 2  # 1 für Header + 1 Leerzeile
 
                 # Fallbacks, falls nichts kam
@@ -241,7 +279,6 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 activeCCW = summary_vals.get("AktivCCW")
                 activeSum = summary_vals.get("AktivSumme")
 
-                # Formate hast du schon (format_degree etc.)
                 ws.write(start + 0, 0, "Totzone")
                 if totzone is not None:
                     ws.write_number(start + 0, 1, totzone, format_degree)
@@ -261,10 +298,97 @@ def write_serial(gesamtV, gesamtW, d11, d12, d21, d22, d31, d32, stop_event, on_
                 if activeSum is not None:
                     ws.write_number(start + 4, 1, activeSum, format_degree)
 
+                ws.write(start + 0, 6, "Lin Max")
+                if lin_max is not None:
+                    if error_lin_idx:
+                        ws.write_number(start + 0, 7, lin_max, format_error_percent)
+                    else:
+                        ws.write_number(start + 0, 7, lin_max, format_percent)
+
+                ws.write(start + 1, 6, "Lin Min")
+                if lin_min is not None:
+                    if error_lin_idx:
+                        ws.write_number(start + 1, 7, lin_min, format_error_percent)
+                    else:
+                        ws.write_number(start + 1, 7, lin_min, format_percent)
+                        
     except Exception as e:
         print("Fehler bei Serial: ", e) #debug
 
     root.after(0, on_finish)
+
+'''
+            with pd.ExcelWriter("RMTest-"+txt9.get()+".xlsx", engine="xlsxwriter") as writer:
+                sheet = "Messung"
+                df.to_excel(writer, index=False, sheet_name=sheet)
+                wb = writer.book
+                ws = writer.sheets[sheet]
+
+                format_percent = wb.add_format({'num_format': '0.00%','align': 'center'})
+                format_degree = wb.add_format({'num_format': '0.0°','align': 'center'})
+                format_volt2 = wb.add_format({'num_format': '0.00','align': 'center'})
+                format_volt3 = wb.add_format({'num_format': '0.000','align': 'center'})
+                format_header = wb.add_format({'text_wrap': True, 'align': 'center', 'valign': 'vcenter', 'bold': True})
+                format_error_percent = wb.add_format({'num_format': '0.00%', 'align': 'center', 'bg_color': "#F86A5A"})
+
+                ws.set_row(0, 35, format_header)
+                ws.set_column('A:A', 44)
+                ws.set_column('B:B', 20, format_degree)
+                ws.set_column('C:C', 20, format_volt2)
+                ws.set_column('D:D', 20, format_volt3)
+                ws.set_column('E:E', 20, format_degree)
+                ws.set_column('F:F', 20, format_degree)
+                ws.set_column('G:G', 20, format_volt3)
+                ws.set_column('H:H', 20, format_percent)
+
+                ws.freeze_panes(1,0)
+
+                start = len(df) + 2  # 1 für Header + 1 Leerzeile
+
+                # Fallbacks, falls nichts kam
+                totzone   = summary_vals.get("Totzone")
+                activeCW  = summary_vals.get("AktivCW")
+                activeCCW = summary_vals.get("AktivCCW")
+                activeSum = summary_vals.get("AktivSumme")
+
+                ws.write(start + 0, 0, "Totzone")
+                if totzone is not None:
+                    ws.write_number(start + 0, 1, totzone, format_degree)
+
+                ws.write(start + 1, 0, "Winkel Aktiver Bereich CW (Drehrichtung-)(11)")
+                if activeCW is not None:
+                    ws.write_number(start + 1, 1, activeCW, format_degree)
+
+                ws.write(start + 2, 0, "Winkel Aktiver Bereich CCW (Drehrichtung+)(13)")
+                if activeCCW is not None:
+                    ws.write_number(start + 2, 1, activeCCW, format_degree)
+
+                ws.write_blank(start + 3, 0, None)
+                ws.write_blank(start + 3, 1, None)
+
+                ws.write(start + 4, 0, "Aktive Bereiche Gesamt")
+                if activeSum is not None:
+                    ws.write_number(start + 4, 1, activeSum, format_degree)
+
+                ws.write(start + 0, 6, "Lin Max")
+                if lin_max is not None:
+                    if error_lin_idx:
+                        ws.write_number(start + 0, 7, lin_max, format_error_percent)
+                    else:
+                        ws.write_number(start + 0, 7, lin_max, format_percent)
+
+                ws.write(start + 1, 6, "Lin Min")
+                if lin_min is not None:
+                    if error_lin_idx:
+                        ws.write_number(start + 1, 7, lin_min, format_error_percent)
+                    else:
+                        ws.write_number(start + 1, 7, lin_min, format_percent)
+                        
+    except Exception as e:
+        print("Fehler bei Serial: ", e) #debug
+
+    root.after(0, on_finish)
+'''
 
 def close_window():
     root.destroy()
@@ -339,7 +463,7 @@ def curr_Pos():
     except Exception as e:
         print("Fehler bei Serial: ", e) #debug
 
-def goto():
+'''def goto():
     try:
         txtgoto = float(txtgo.get().strip())
         ser_Arduino.write(f"goto:{txtgoto}\n".encode())
@@ -356,7 +480,7 @@ def goto():
             if line == 'CANCEL':
                 break
     except Exception as e:
-        print("Fehler bei Serial: ", e) #debug
+        print("Fehler bei Serial: ", e) #debug'''
 
 def go_zero(stop_event, on_finish):
     try:
@@ -566,10 +690,9 @@ right_frame.grid_columnconfigure(1, weight=0)
 
 vcmd = (root.register(lambda P: (P.count(',') <= 1 and all(ch.isdigit() or ch == ',' for ch in P))), "%P")
 
-ttk.Label(left_frame, text="Name Teil:").grid(row=4, column=0, sticky="w", pady=(20, 0), padx=(20,0))
+ttk.Label(left_frame, text="Auftragsnummer:").grid(row=4, column=0, sticky="w", pady=(20, 0), padx=(20,0))
 txt9 = ttk.Entry(left_frame, width=20)
 txt9.grid(row=5, column=0, pady=(0, 10), padx=(20,0))
-txt9.insert(0, "T107357")
 
 ttk.Label(right_frame, text="Sollspannung:").grid(row=1, column=1, sticky="w", pady=(40, 0), padx=(40,0))
 txt1 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
@@ -612,17 +735,17 @@ txt8 = ttk.Entry(right_frame, width=20, validate="key", validatecommand=vcmd)
 txt8.grid(row=8, column=2, pady=(0, 10), padx=(20,0))
 txt8.insert(0, "330,0")
 
-txtgo = ttk.Entry(left_frame, width=20, validate="key", validatecommand=vcmd)
-txtgo.grid(row=3, column=1, pady=(0, 0), padx=(0,0))
+#txtgo = ttk.Entry(left_frame, width=20, validate="key", validatecommand=vcmd)
+#txtgo.grid(row=3, column=1, pady=(0, 0), padx=(0,0))
 
 ttk.Button(left_frame, text="Abbrechen", command=close_window).grid(row=7, column=0, pady=(4, 5), padx=(0,0), ipadx=40)
 ttk.Button(left_frame, text="Messen", command=open_calc_win).grid(row=6, column=0, pady=(80, 5), padx=(0,0), ipadx=40)
 ttk.Button(left_frame, text="Position 0", command=open_zero_window).grid(row=8, column=0, pady=(80, 5), padx=(0,0), ipadx=40)
-ttk.Button(left_frame, text="0.1 Links", command=go_left).grid(row=6, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
-ttk.Button(left_frame, text="0.1 Rechts", command=go_Right).grid(row=7, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
-ttk.Button(left_frame, text="Conn Serial", command=ser_Connect).grid(row=5, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
-ttk.Button(left_frame, text="Curr Position", command=curr_Pos).grid(row=8, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
-ttk.Button(left_frame, text="Go To", command=goto).grid(row=4, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+#ttk.Button(left_frame, text="0.1 Links", command=go_left).grid(row=6, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+#ttk.Button(left_frame, text="0.1 Rechts", command=go_Right).grid(row=7, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+#ttk.Button(left_frame, text="Conn Serial", command=ser_Connect).grid(row=5, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+#ttk.Button(left_frame, text="Curr Position", command=curr_Pos).grid(row=8, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
+#ttk.Button(left_frame, text="Go To", command=goto).grid(row=4, column=1, pady=(4, 5), padx=(0,0), ipadx=40)
 
 txt1.bind("<Return>", lambda event: open_calc_win())
 txt2.bind("<Return>", lambda event: open_calc_win())
